@@ -1,0 +1,106 @@
+---
+description: Apply these rules when creating the project
+globs:
+alwaysApply: true
+---
+## Project Overview
+
+*   **Type:** Web Application
+*   **Description:** The VISA DECLARATION VIEWER is a web application with a tab-based interface designed to display, edit, and generate labels from visa declaration data fetched via an API. It integrates a dynamic table, detailed data card, inline editable grid, and label generation system using modern UI frameworks.
+*   **Primary Goal:** Build an intuitive and responsive VISA DECLARATION VIEWER that enables users to view visa data in a selectable table, inspect detailed records, perform temporary in-grid edits, and generate printable labels following specific formatting rules.
+
+## Project Structure
+
+### Framework-Specific Routing
+
+*   **Directory Rules:**
+
+    *   **Vue Router 4 (Vue 3):** Organize routes in `src/router/index.js` and structure views within `src/views/` corresponding to each tab. For example, use route definitions for tabs such as `/list`, `/details`, `/edit`, and `/labels`.
+    *   Example: For a tab-based navigation, the Bulma-styled navigation in `sample_tab.html` can be integrated as a component included in the main layout (e.g., in `App.vue`).
+
+### Core Directories
+
+*   **Versioned Structure:**
+
+    *   **src/views:** Contains Vue components for each tab view (e.g., `ListView.vue`, `DetailView.vue`, `EditView.vue`, `LabelView.vue`).
+    *   **src/components:** Houses reusable components such as the dynamic Tabulator table, data cards, editable grid cells, and label printers.
+    *   **src/router:** Contains routing logic using Vue Router 4.
+    *   **src/assets:** For Bulma, Tailwind CSS, and other static assets including the `Packing_labels.md` file which defines label formatting rules.
+
+### Key Files
+
+*   **Stack-Versioned Patterns:**
+
+    *   **main.js:** Bootstraps the Vue application and integrates Vue Router.
+    *   **App.vue:** The root Vue component that includes the navigation menu (styled with Bulma using `sample_tab.html`) and manages layout.
+    *   **src/views/ListView.vue:** Implements the Tabulator.js table for selectable listings.
+    *   **src/views/DetailView.vue:** Displays detailed data in a centered card with an HTML table and a Download button.
+    *   **src/views/EditView.vue:** Provides an editable grid with inline editing, row reordering, and row addition functionalities.
+    *   **src/views/LabelView.vue:** Implements label generation and print functionality following rules outlined in `Packing_labels.md`.
+
+## Tech Stack Rules
+
+*   **Version Enforcement:**
+
+    *   **<vue@3.x>:** Use Vue 3 with Composition API and Single-File Components.
+    *   **<bulma@0.9.x>:** Follow Bulma CSS conventions for layout and navigation without heavy overrides.
+    *   **<tailwindcss@3.x>:** Utilize Tailwind’s utility-first classes for responsive design and custom styling.
+    *   **<tabulator@5.x>:** Leverage Tabulator.js for dynamic table creation ensuring proper event handling for row selection.
+    *   **javascript (ES6+):** Implement modern JS practices for API calls, data manipulation, and error handling.
+
+## PRD Compliance
+
+*   **Non-Negotiable:**
+
+    *   "Data edited in Tab 3 is temporary and will be lost when a new row is selected in Tab 1." This must be enforced to ensure that edits are not persisted beyond the current session.
+
+## App Flow Integration
+
+*   **Stack-Aligned Flow:**
+
+    *   **Tab 1 (Selectable Listing):** Loads visa declarations via Tabulator.js from the API. Row selection (via tickboxes) triggers an API call.
+    *   **Tab 2 (Detailed Data Display):** Automatically activated post-selection to display detailed data in a formatted card with download capability.
+    *   **Tab 3 (Editable Grid):** Allows inline data edits, drag-and-drop row reordering, and addition of new rows; changes are temporary.
+    *   **Tab 4 (Label Generation):** Generates and prints labels using data aggregated from Tab 2 and Tab 3, formatted as per the guidelines in `Packing_labels.md`.
+
+## Best Practices
+
+*   **<vue@3.x>**
+
+    *   Use Single-File Components (SFC) for modularity.
+    *   Leverage the Composition API for better state and lifecycle management.
+    *   Maintain clear separation of concerns between components and views.
+
+*   **<bulma@0.9.x>**
+
+    *   Utilize Bulma’s predefined classes for a clean and consistent layout.
+    *   Integrate Bulma components without overriding default styles.
+    *   Ensure responsive design by combining Bulma with Tailwind CSS where needed.
+
+*   **<tailwindcss@3.x>**
+
+    *   Follow a utility-first approach to rapidly style components.
+    *   Configure PurgeCSS or JIT mode for optimized builds.
+    *   Maintain consistency in responsive breakpoints and spacing.
+
+*   **<tabulator@5.x>**
+
+    *   Configure the table using Tabulator’s API to dynamically render data.
+    *   Utilize event listeners for row selection and API triggering.
+    *   Optimize table performance for handling dynamic data updates.
+
+*   **javascript (ES6+)**
+
+    *   Write modular, maintainable code using modern syntax.
+    *   Implement robust error handling especially around API calls.
+    *   Keep business logic separate from UI components to enhance testability.
+
+## Rules
+
+*   Derive folder/file patterns **directly** from tech stack versions and framework guidelines.
+*   For Vue.js with Vue Router 4: Organize routes within `src/router` and maintain clear separation between views and components.
+*   Use Bulma and Tailwind CSS without conflicting class names by keeping styling scoped to components where necessary.
+*   Ensure Tabulator.js configurations are encapsulated in dedicated components to avoid mixing concerns.
+*   Adhere strictly to non-persistence in Tab 3: any edits made are temporary and should reset upon changing selection in Tab 1.
+*   Follow the precise label formatting rules dictated in `Packing_labels.md` for Tab 4 label generation.
+*   Do not mix framework and version-specific patterns; maintain clarity by keeping assets, components, and routing logic in their respective directories.
