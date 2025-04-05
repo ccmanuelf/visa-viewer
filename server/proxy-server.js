@@ -11,7 +11,7 @@ const PORT = 3000;
 
 // Enable CORS for the frontend
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:5176'], // Frontend URLs (Vite defaults)
+  origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175', 'http://localhost:5176'], // Frontend URLs (Vite defaults)
   credentials: true
 }));
 

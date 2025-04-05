@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue';
+import { ref, nextTick } from 'vue';
 import TabNavigation from './components/TabNavigation.vue';
 import Tab1ListTable from './components/Tab1ListTable.vue';
 import Tab2CoverPage from './components/Tab2CoverPage.vue';
@@ -23,14 +23,23 @@ const notification = ref({
 const sqlCmd = ref(import.meta.env.VITE_DEFAULT_SQL_CMD || "SELECT PART, DESCRIPTION FROM PART WHERE PART='PW00111-US';");
 
 // Handle row selection from Tab1ListTable
-const handleRowSelected = (rowData) => {
-  selectedDeclaration.value = rowData;
-  
-  // Automatically switch to Tab 2 when a row is selected
-  if (tabNavigation.value) {
-    tabNavigation.value.setActiveTab('tab2');
-  }
-};
+  const handleRowSelected = (rowData) => {
+    console.log('handleRowSelected called with data:', rowData);
+    selectedDeclaration.value = rowData;
+    
+    // Automatically switch to Tab 2 when a row is selected
+    if (rowData) { // Only switch tabs if we have row data
+      console.log('Attempting to switch to tab2');
+      // Use nextTick to ensure the component is updated before accessing the ref
+      nextTick(() => {
+        if (tabNavigation.value) {
+          tabNavigation.value.setActiveTab('tab2');
+        } else {
+          console.error('tabNavigation reference is not available');
+        }
+      });
+    }
+  };
 
 // Handle data loaded event
 const handleDataLoaded = (data) => {
@@ -55,12 +64,26 @@ const showNotification = (message, type = 'info') => {
     notification.value.show = false;
   }, 5000);
 };
+
+// Add near your other methods in the <script setup> section
+const testEventFlow = () => {
+  console.log('Testing event flow');
+  const testData = { id: 999, visa: 'TEST' };
+  handleRowSelected(testData);
+};
+
+// Add at the end of your <script setup> section
+defineExpose({
+  testEventFlow
+});
 </script>
 
 <template>
   <div class="app-container">
     <header class="app-header">
       <h1>VISA Declaration Viewer</h1>
+      <!-- Add test button here -->
+      <button @click="testEventFlow" class="button is-small is-info">Test Event Flow</button>
     </header>
     
     <!-- Notification component -->
@@ -77,7 +100,7 @@ const showNotification = (message, type = 'info') => {
       <TabNavigation ref="tabNavigation">
         <template #tab1>
           <Tab1ListTable 
-            @row-selected="handleRowSelected" 
+            @rowSelected="handleRowSelected" 
             @data-loaded="handleDataLoaded"
             @data-error="handleDataError"
             :sql-cmd="sqlCmd"

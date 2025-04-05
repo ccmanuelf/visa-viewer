@@ -6,7 +6,9 @@ const activeTab = ref('tab1');
 
 // Function to change the active tab
 const setActiveTab = (tabId) => {
+  console.log('setActiveTab called with tabId:', tabId);
   activeTab.value = tabId;
+  console.log('activeTab value after update:', activeTab.value);
 };
 
 // Expose the active tab and setter function to parent components

@@ -96,8 +96,9 @@ onMounted(() => {
         data: [],
         height: "400px",
         
-        // Most basic row selection configuration
-        selectableRows: 1, // This should limit to 1 row
+        // Row selection configuration
+        selectable: true,  // Enable row selection
+        selectableRows: 1, // Limit to 1 row
         selectableRowsRollingSelection: true,
         // Row header for checkboxes
         rowHeader: {
@@ -119,11 +120,13 @@ onMounted(() => {
         columns: [],
         
         // Row selection event
-        rowSelectionChanged: function(data, rows) {
-          console.log("Selection changed, rows selected:", data.length);
-          emit('rowSelected', data.length > 0 ? data[0] : null);
-        }
+        rowClick: null,
       });
+
+      table.on("rowSelected", function(row) {
+          console.log("Row selected:", row.getData());
+          emit('rowSelected', row.getData());
+        });
 
       console.log("Tabulator initialized successfully");
       
@@ -162,6 +165,7 @@ onBeforeUnmount(() => {
     }
   }
 });
+
 </script>
 
 <template>
