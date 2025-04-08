@@ -801,9 +801,7 @@ const getSampleReportData = () => {
 <template>
   <div class="cover-page-container">
     <div v-if="!props.declaration" class="no-selection">
-      <h2>Cover Page</h2>
-      <p>Please select a declaration from the Declaration Listing tab to view its cover page.</p>
-      <p class="debug-info">Debug: No declaration selected</p>
+      <p>Please select a declaration from the list to view its cover page.</p>
     </div>
     
     <div v-else>
@@ -849,24 +847,24 @@ const getSampleReportData = () => {
       
       <div v-else-if="reportData" class="report-container">
         <!-- Header section -->
-        <table class="report-header-table">
+        <table class="report-table">
           <tbody>
             <tr>
-              <td>Client Name</td>
+              <td><strong>Client Name</strong></td>
               <td>{{ reportData.header.clientName }}</td>
               <td></td>
-              <td>Export Date</td>
+              <td><strong>Export Date</strong></td>
               <td>{{ reportData.header.exportDate }}</td>
             </tr>
             <tr>
-              <td>From</td>
+              <td><strong>From</strong></td>
               <td>{{ reportData.header.from }}</td>
               <td></td>
-              <td>Shipment #</td>
+              <td><strong>Shipment #</strong></td>
               <td>{{ reportData.header.shipmentNumber }}</td>
             </tr>
             <tr>
-              <td>To</td>
+              <td><strong>To</strong></td>
               <td>{{ reportData.header.to }}</td>
               <td></td>
               <td></td>
@@ -876,278 +874,153 @@ const getSampleReportData = () => {
         </table>
         
         <!-- Main report table -->
-        <table class="report-main-table">
+        <div class="table-wrapper">
+          <table class="report-table">
+            <thead>
+              <tr>
+                <th>PART</th>
+                <th>PART CLIENT</th>
+                <th>DESCRIPTION</th>
+                <th>PO</th>
+                <th>QTY</th>
+                <th>UOM</th>
+                <th>BOX</th>
+                <th class="hide-mobile">ORIGIN</th>
+                <th class="hide-mobile">QTY PER SET</th>
+                <th>TOTAL WEIGHT (LBS)</th>
+                <th class="hide-mobile">UNIT COST</th>
+                <th class="hide-mobile">LABOR</th>
+                <th>TOTAL COST</th>
+                <th>SKID</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(item, index) in reportData.lineItems" :key="`${item.skid}-${item.part}`">
+                <td>{{ item.part }}</td>
+                <td class="editable" @click="makeEditable" :data-row-index="index" data-column="clientPart">{{ item.clientPart }}</td>
+                <td class="editable description-cell" @click="makeEditable" :data-row-index="index" data-column="description">{{ item.description }}</td>
+                <td class="editable" @click="makeEditable" :data-row-index="index" data-column="po">{{ item.po }}</td>
+                <td class="editable" @click="makeEditable" :data-row-index="index" data-column="qty">{{ item.qty }}</td>
+                <td>{{ item.uom }}</td>
+                <td class="editable" @click="makeEditable" :data-row-index="index" data-column="boxCount">{{ item.boxCount }}</td>
+                <td class="editable hide-mobile" @click="makeEditable" :data-row-index="index" data-column="origin">{{ item.origin }}</td>
+                <td class="editable hide-mobile" @click="makeEditable" :data-row-index="index" data-column="qtyPerSet">{{ item.qtyPerSet }}</td>
+                <td class="editable" @click="makeEditable" :data-row-index="index" data-column="weight">{{ item.weight.toFixed(2) }}</td>
+                <td class="editable hide-mobile" @click="makeEditable" :data-row-index="index" data-column="unitCost">{{ item.unitCost.toFixed(2) }}</td>
+                <td class="editable hide-mobile" @click="makeEditable" :data-row-index="index" data-column="labor">{{ item.labor.toFixed(2) }}</td>
+                <td>{{ item.totalCost.toFixed(2) }}</td>
+                <td>{{ item.skid }}</td>
+              </tr>
+              <tr class="subtotal-row">
+                <td colspan="3"></td>
+                <td><strong>Total</strong></td>
+                <td><strong>{{ reportData.subtotals.quantity }}</strong></td>
+                <td></td>
+                <td><strong>{{ reportData.subtotals.boxes }}</strong></td>
+                <td class="hide-mobile"></td>
+                <td class="hide-mobile"></td>
+                <td><strong>{{ reportData.subtotals.weight.toFixed(2) }}</strong></td>
+                <td class="hide-mobile"></td>
+                <td class="hide-mobile"></td>
+                <td><strong>{{ reportData.subtotals.totalCost.toFixed(2) }}</strong></td>
+                <td><strong>{{ reportData.subtotals.skids }}</strong></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Packaging section -->
+        <table class="packaging-table">
           <thead>
             <tr>
-              <th>PART</th>
-              <th>PART CLIENT</th>
-              <th>DESCRIPTION</th>
-              <th>PO</th>
-              <th>QTY</th>
-              <th>UOM</th>
-              <th>BOX</th>
-              <th>ORIGIN</th>
-              <th>QTY PER SET</th>
-              <th>TOTAL WEIGHT (LBS)</th>
-              <th>UNIT COST</th>
-              <th>LABOR</th>
-              <th>TOTAL COST</th>
-              <th>SKID</th>
+              <td colspan="5"></td>
+              <td>Box's</td>
+              <td>Quantity</td>
             </tr>
           </thead>
           <tbody>
-            <!-- Line items -->
-            <tr v-for="(item, index) in reportData.lineItems" :key="`${item.skid}-${item.part}`">
-              <td>{{ item.part }}</td>
-              <td 
-                class="editable" 
-                @click="makeEditable" 
-                :data-row-index="index" 
-                data-column="clientPart"
-              >{{ item.clientPart }}</td>
-              <td 
-                class="editable" 
-                @click="makeEditable" 
-                :data-row-index="index" 
-                data-column="description"
-              >{{ item.description }}</td>
-              <td 
-                class="editable" 
-                @click="makeEditable" 
-                :data-row-index="index" 
-                data-column="po"
-              >{{ item.po }}</td>
-              <td 
-                class="editable" 
-                @click="makeEditable" 
-                :data-row-index="index" 
-                data-column="qty"
-              >{{ item.qty }}</td>
-              <td>{{ item.uom }}</td>
-              <td 
-                class="editable" 
-                @click="makeEditable" 
-                :data-row-index="index" 
-                data-column="boxCount"
-              >{{ item.boxCount }}</td>
-              <td 
-                class="editable" 
-                @click="makeEditable" 
-                :data-row-index="index" 
-                data-column="origin"
-              >{{ item.origin }}</td>
-              <td 
-                class="editable" 
-                @click="makeEditable" 
-                :data-row-index="index" 
-                data-column="qtyPerSet"
-              >{{ item.qtyPerSet }}</td>
-              <td 
-                class="editable" 
-                @click="makeEditable" 
-                :data-row-index="index" 
-                data-column="weight"
-              >{{ item.weight.toFixed(2) }}</td>
-              <td 
-                class="editable" 
-                @click="makeEditable" 
-                :data-row-index="index" 
-                data-column="unitCost"
-              >{{ item.unitCost.toFixed(2) }}</td>
-              <td 
-                class="editable" 
-                @click="makeEditable" 
-                :data-row-index="index" 
-                data-column="labor"
-              >{{ item.labor.toFixed(2) }}</td>
-              <td>{{ item.totalCost.toFixed(2) }}</td>
-              <td>{{ item.skid }}</td>
-            </tr>
-            
-            <!-- Subtotal row -->
-            <tr class="subtotal-row">
-              <td colspan="3"></td>
-              <td>Total</td>
-              <td>{{ reportData.subtotals.quantity }}</td>
-              <td></td>
-              <td>{{ reportData.subtotals.boxes }}</td>
-              <td></td>
-              <td></td>
-              <td>{{ reportData.subtotals.weight.toFixed(2) }}</td>
-              <td></td>
-              <td></td>
-              <td>{{ reportData.subtotals.totalCost.toFixed(2) }}</td>
-              <td>{{ reportData.subtotals.skids }}</td>
+            <!-- Packaging rows -->
+            <tr v-for="item in reportData.packagingSection" :key="item.part"
+              :class="{ 'total-row': item.part === 'Total' }">
+              <td colspan="5">{{ item.description }}</td>
+              <td>{{ item.boxCount }}</td>
+              <td>{{ item.qty }}</td>
             </tr>
           </tbody>
         </table>
-        
-        <!-- Packaging section -->
-<table class="packaging-table">
-<thead>
-<tr>
-<td colspan="5"></td>
-<td>Box's</td>
-<td>Quantity</td>
-</tr>
-</thead>
-<tbody>
-<!-- Packaging rows -->
-<tr v-for="item in reportData.packagingSection" :key="item.part"
-:class="{ 'total-row': item.part === 'Total' }">
-<td colspan="5">{{ item.description }}</td>
-<td>{{ item.boxCount }}</td>
-<td>{{ item.qty }}</td>
-</tr>
-</tbody>
-</table>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-.cover-page-container {
-  padding: 20px;
-}
-
-.no-selection {
-  text-align: center;
-  margin-top: 50px;
-}
-
-.report-controls {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-}
-
-.buttons {
-  display: flex;
-  gap: 10px;
-}
-
-.toggle-button, .export-button, .retry-button {
-  padding: 8px 16px;
-  border-radius: 4px;
-  cursor: pointer;
-  font-weight: 500;
-  border: 1px solid #dbdbdb;
-  background-color: #f5f5f5;
-}
-
-.export-button {
-  background-color: #48c774;
-  color: white;
-  border-color: #48c774;
-}
-
-.export-button:disabled {
-  background-color: #a5a5a5;
-  border-color: #a5a5a5;
-  cursor: not-allowed;
-}
-
-.loading, .error {
-  text-align: center;
-  margin: 50px 0;
-}
-
-.error {
-  color: #f14668;
-}
-
 .report-container {
-  margin-top: 20px;
-}
-
-.report-header-table {
-  width: 100%;
-  margin-bottom: 20px;
-  border-collapse: collapse;
-}
-
-.report-header-table td {
-  padding: 8px;
-  border: 1px solid #dbdbdb;
-}
-
-.report-main-table {
-  width: 100%;
-  margin-bottom: 20px;
-  border-collapse: collapse;
-}
-
-.report-main-table th, .report-main-table td {
-  padding: 8px;
-  border: 1px solid #dbdbdb;
-  text-align: left;
-}
-
-.report-main-table th {
-  background-color: #f5f5f5;
-  font-weight: bold;
-}
-
-.subtotal-row td {
-  font-weight: bold;
-  background-color: #f5f5f5;
-}
-
-.packaging-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.packaging-table td {
-padding: 8px;
-border: 1px solid #dbdbdb;
-text-align: left;
-}
-
-.packaging-table .total-row {
-background-color: #f5f5f5;
-font-weight: bold;
-}
-
-.debug-toggle {
-text-align: right;
-margin-bottom: 10px;
-}
-
-.editable {
-  cursor: pointer;
+  max-width: 100%;
+  overflow-x: auto;
   position: relative;
 }
 
-.editable:hover {
-  background-color: #f9f9f9;
+.report-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 1200px; /* Ensure minimum width for content */
 }
 
-.editable:hover::after {
-  content: '✏️';
-  position: absolute;
-  right: 5px;
-  opacity: 0.5;
+.report-table th {
+  position: sticky;
+  top: 0;
+  background: #f8f9fa;
+  z-index: 10;
+  padding: 12px 8px;
+  text-align: left;
+  border-bottom: 2px solid #dee2e6;
+  white-space: nowrap;
 }
 
-/* Debug styles */
-.debug-section {
-  margin: 20px 0;
-  padding: 10px;
-  background-color: #f8f9fa;
-  border: 1px solid #dee2e6;
-  border-radius: 4px;
+.report-table td {
+  padding: 8px;
+  border-bottom: 1px solid #dee2e6;
+  vertical-align: top;
 }
 
-.debug-section h3 {
-  margin-top: 0;
-  color: #6c757d;
+.report-table tr:nth-child(even) {
+  background-color: rgba(0, 0, 0, 0.02);
 }
 
-.debug-info {
-  color: #6c757d;
-  font-style: italic;
+.report-table .description-cell {
+  max-width: 300px;
+  white-space: normal;
+  word-wrap: break-word;
+}
+
+/* Responsive design */
+@media screen and (max-width: 1024px) {
+  .report-table {
+    font-size: 14px;
+  }
+  
+  .report-table th,
+  .report-table td {
+    padding: 6px 4px;
+  }
+  
+  .report-table .description-cell {
+    max-width: 200px;
+  }
+}
+
+@media screen and (max-width: 768px) {
+  .report-table {
+    font-size: 12px;
+  }
+  
+  /* Hide less critical columns */
+  .report-table .hide-mobile {
+    display: none;
+  }
+  
+  .report-table .description-cell {
+    max-width: 150px;
+  }
 }
 </style>
