@@ -1,0 +1,1010 @@
+<script setup>
+import { ref, watch, computed, onMounted } from 'vue';
+import axios from 'axios';
+import ExcelJS from 'exceljs';
+
+// Props to receive the selected declaration from Tab1
+const props = defineProps({
+  declaration: {
+    type: Object,
+    default: () => null
+  }
+});
+
+// State variables
+const isLoading = ref(false);
+const hasError = ref(false);
+const errorMessage = ref('');
+const reportData = ref(null);
+const editedCells = ref({});
+
+// Watch for changes in the selected declaration
+watch(() => props.declaration, async (newDeclaration) => {
+  console.log('Declaration changed in Tab2:', newDeclaration);
+  if (newDeclaration) {
+    // Only trigger when a declaration is selected (not when deselected)
+    await fetchReportData(newDeclaration);
+  } else {
+    // Clear report data when no declaration is selected
+    reportData.value = null;
+  }
+}, { immediate: true });
+
+// Build SQL command using the environment variable and replacing the placeholder
+const buildSqlCommand = (declaration) => {
+  // Use the SQL command from environment variables
+  const sqlTemplate = import.meta.env.VITE_VISA_SQL_CMD;
+  // Use the ID field from the declaration for the SQL query
+  return sqlTemplate.replace('{ID_FROM_TABLE}', declaration.id);
+};
+
+// Fetch report data from API
+const fetchReportData = async (declaration) => {
+  if (!declaration || !declaration.id) {
+    console.log('No valid declaration provided to fetchReportData');
+    return;
+  }
+  
+  console.log('Fetching report data for declaration ID:', declaration.id, 'VISA:', declaration.visa);
+  isLoading.value = true;
+  hasError.value = false;
+  errorMessage.value = '';
+  
+  try {
+    // Build the SQL command
+    const sqlCmd = buildSqlCommand(declaration);
+    console.log('Using SQL command:', sqlCmd);
+    console.log('API call initiated at:', new Date().toISOString());
+    
+    // Make API call
+    const apiUrl = 'http://localhost:3000/api';
+    console.log('Sending request to:', apiUrl);
+    const response = await axios.post(apiUrl, {
+      sqlCmd: sqlCmd,
+      responseFormat: 'JSON' // Changed from CSV to JSON for better debugging
+    });
+    console.log('API call completed at:', new Date().toISOString());
+    
+    // Check if the response is successful
+    if (response.data && response.data.status === 'OK') {
+      console.log('API response successful:', response.data);
+      
+      // Process the data - no await needed since processReportData is not async
+      const processedData = processReportData(response.data.data);
+      console.log('Processed report data:', processedData);
+      
+      // Ensure processedData has the expected structure before assigning
+      if (processedData && typeof processedData === 'object' && processedData.header) {
+        reportData.value = processedData;
+      } else {
+        console.error('Processed data has invalid structure:', processedData);
+        throw new Error('Invalid data structure after processing');
+      }
+    } else {
+      console.error('API error response:', response.data);
+      throw new Error('API returned an error: ' + (response.data?.message || 'Unknown error'));
+    }
+  } catch (error) {
+    console.error('Error fetching report data:', error);
+    hasError.value = true;
+    errorMessage.value = error.message || 'Failed to load report data';
+    reportData.value = null;
+  } finally {
+    isLoading.value = false;
+  }
+};
+
+// Process the raw data into a structured report
+const processReportData = (rawData) => {
+  console.log('Processing raw data:', rawData);
+  
+  // Handle different data formats (JSON object vs array)
+  let processableData = [];
+  
+  // Check if we have a valid data structure from the API
+  if (rawData && typeof rawData === 'object') {
+    console.log('Detected JSON format data with DataTable structure');
+    
+    // Direct DataTable structure (most common case)
+    if (rawData.rows && Array.isArray(rawData.rows) && rawData.columns && Array.isArray(rawData.columns)) {
+      processableData = rawData.rows.map(row => {
+        const rowObj = {};
+        rawData.columns.forEach((column, index) => {
+          if (column && typeof column === 'object' && column.columnName) {
+            // Store both original case and lowercase for compatibility
+            const columnName = column.columnName;
+            rowObj[columnName] = row.values && row.values[index] ? row.values[index].value : null;
+            
+            // Also add lowercase version for case-insensitive access
+            rowObj[columnName.toLowerCase()] = row.values && row.values[index] ? row.values[index].value : null;
+          } else {
+            // Fallback for simpler column structure
+            rowObj[column] = row[index];
+          }
+        });
+        return rowObj;
+      });
+      console.log('Converted DataTable to array of objects:', processableData);
+    } 
+    // Nested DataTable structure with data wrapper
+    else if (rawData.data && typeof rawData.data === 'object' && 
+             rawData.data.rows && Array.isArray(rawData.data.rows) && 
+             rawData.data.columns && Array.isArray(rawData.data.columns)) {
+      processableData = rawData.data.rows.map(row => {
+        const rowObj = {};
+        rawData.data.columns.forEach((column, index) => {
+          if (column && typeof column === 'object' && column.columnName) {
+            // Store both original case and lowercase for compatibility
+            const columnName = column.columnName;
+            rowObj[columnName] = row.values && row.values[index] ? row.values[index].value : null;
+            
+            // Also add lowercase version for case-insensitive access
+            rowObj[columnName.toLowerCase()] = row.values && row.values[index] ? row.values[index].value : null;
+          } else {
+            rowObj[column] = row[index];
+          }
+        });
+        return rowObj;
+      });
+      console.log('Converted nested DataTable to array of objects:', processableData);
+    }
+  }
+  
+  // Check if processableData is valid
+  if (!processableData || !Array.isArray(processableData) || processableData.length === 0) {
+    console.error('Invalid or empty processed data');
+    return {
+      header: {
+        clientName: 'Unknown',
+        from: 'Unknown',
+        to: 'Unknown',
+        exportDate: 'Unknown',
+        shipmentNumber: props.declaration ? props.declaration.visa || 'Unknown' : 'Unknown'
+      },
+      lineItems: [],
+      subtotals: {
+        quantity: 0,
+        boxes: 0,
+        weight: 0,
+        totalCost: 0,
+        skids: 0
+      },
+      packagingSection: []
+    };
+  }
+  // 1. Identify packaging materials
+  const packagingMaterials = identifyPackagingMaterials(processableData);
+  
+  // 2. Extract header information
+  const header = constructHeader(processableData);
+  
+  // 3. Build the summary body
+  const lineItems = constructSummaryBody(processableData, packagingMaterials);
+  
+  // 4. Calculate subtotals
+  const subtotals = calculateSubtotals(lineItems);
+  
+  // 5. Build packaging summary
+  const packagingSection = constructPackagingSummary(processableData, packagingMaterials);
+  
+  // 6. Return complete report structure
+  return {
+    header,
+    lineItems,
+    subtotals,
+    packagingSection
+  };
+};
+
+// Identify packaging materials based on data patterns
+const identifyPackagingMaterials = (rawData) => {
+  // Count occurrences of each part number
+  const partCounts = {};
+  const partWithSkidCounts = {};
+  
+  // Track which parts appear with SKID assignments
+  rawData.forEach(row => {
+    // Handle case-insensitive property names
+    const part = row.PART || row.part;
+    const skids = row.SKIDS || row.skids;
+    
+    if (part) {
+      partCounts[part] = (partCounts[part] || 0) + 1;
+      
+      if (skids !== null && skids !== undefined) {
+        partWithSkidCounts[part] = (partWithSkidCounts[part] || 0) + 1;
+      }
+    }
+  });
+  
+  // Identify parts that rarely appear with SKIDs as packaging materials
+  return Object.keys(partCounts).filter(part => {
+    const withSkidCount = partWithSkidCounts[part] || 0;
+    const totalCount = partCounts[part];
+    
+    // Parts that rarely have SKID assignments are likely packaging
+    return withSkidCount / totalCount < 0.1;
+  });
+};
+
+// Extract header information from the data based on the field mappings
+const constructHeader = (rawData) => {
+  // Create skeleton header structure with fallbacks
+  const header = {
+    clientName: props.declaration?.company_name || 'Unknown',
+    from: 'Unknown',
+    to: 'Unknown',
+    exportDate: props.declaration?.export_at ? new Date(props.declaration.export_at).toLocaleDateString() : 'Unknown',
+    shipmentNumber: props.declaration?.visa || 'Unknown'
+  };
+
+  if (!rawData || !Array.isArray(rawData) || rawData.length === 0) {
+    return header;
+  }
+
+  // Get the first row for header information
+  const firstRow = rawData[0];
+  if (!firstRow) {
+    return header;
+  }
+
+  // Map fields based on the example report
+  // Try both original case and lowercase versions of field names
+
+  // Company/Client Name - mapped to \"KENT WATER SPORTS\" in example
+  const companyNameFields = [
+    'company_name', 'COMPANY_NAME', 
+    'client_name', 'CLIENT_NAME',
+    'DESCRIPTION_CLIENT', 'description_client',
+    'company_id', 'COMPANY_ID' // This might hold company info
+  ];
+
+  for (const field of companyNameFields) {
+    if (firstRow[field] && typeof firstRow[field] === 'string') {
+      header.clientName = firstRow[field];
+      break;
+    }
+  }
+
+  // From - mapped to \"CRISTINA SANCHEZ\" in example
+  if (firstRow.from || firstRow.FROM) {
+    header.from = firstRow.from || firstRow.FROM;
+  }
+
+  // To - mapped to \"IMP/EXP\" in example
+  if (firstRow.to || firstRow.TO) {
+    header.to = firstRow.to || firstRow.TO;
+  }
+
+  // Export Date - mapped to \"2025-01-27\" in example
+  if (firstRow.export_at || firstRow.EXPORT_AT) {
+    try {
+      const dateValue = firstRow.export_at || firstRow.EXPORT_AT;
+      const date = new Date(dateValue);
+      header.exportDate = date.toLocaleDateString();
+    } catch (e) {
+      // If date parsing fails, use the raw value
+      header.exportDate = firstRow.export_at || firstRow.EXPORT_AT;
+    }
+  }
+
+  // Shipment/Visa Number - mapped to \"61\" in example
+  if (firstRow.visa || firstRow.VISA) {
+    header.shipmentNumber = firstRow.visa || firstRow.VISA;
+  }
+
+  return header;
+};
+
+// Build the summary body with line items according to the example report mapping
+const constructSummaryBody = (rawData, packagingMaterials) => {
+  // Filter out packaging materials
+  const productData = rawData.filter(row => {
+    const part = row.PART || row.part;
+    return part && !packagingMaterials.includes(part);
+  });
+
+  // Group by SKID+PART combination as shown in the example report
+  const partSkidGroups = {};
+
+  productData.forEach(row => {
+    // Access fields using both original case and lowercase for compatibility
+    const skids = row.SKIDS || row.skids;
+    const part = row.PART || row.part;
+
+    if (skids === null || skids === undefined || !part) return;
+
+    const key = `${skids}|${part}`;
+
+    if (!partSkidGroups[key]) {
+      // Initialize with mappings from example report
+      partSkidGroups[key] = {
+        skid: skids,                                             // SKID  
+        part: part,                                             // PART
+        clientPart: row.MX_PART || row.mx_part || '',          // PART CLIENT (mapped to S* in example)
+        description: row.DESCRIPTION || row.description || '',  // DESCRIPTION
+        po: row.LOT_NUM || row.LOT || row.lot_num || row.lot || '',  // PO (mapped to K019228 in example)
+        qty: 0,                                                // QTY (accumulated value)
+        uom: row.UM_US || row.UM_MX || row.um_us || row.um_mx || 'PZ',  // UOM (mapped to PZ in example)
+        origin: row.ORIGIN_US || row.ORIGIN_MX || 
+                row.origin_us || row.origin_mx || 'MX',         // ORIGIN (mapped to MX in example)
+        qtyPerSet: 0,                                          // QTY PER SET (mapped to 0 in example)
+        unitCost: parseFloat(row.COST || row.US_PRICE || 
+                            row.cost || row.us_price || 0),      // UNIT COST (e.g., 1.03, 1.5)
+        labor: parseFloat(row.LABOR || row.labor || 0),        // LABOR (mapped to 2.108 in example)
+        boxNumbers: new Set(),                                 // For tracking unique boxes
+        weight: parseFloat(row.US_WEIGHT || row.MX_WEIGHT || 
+                        row.WEIGHT_UNIT || row.us_weight || 
+                        row.mx_weight || row.weight_unit || 0) // Weight per unit
+      };
+    }
+
+    // Accumulate quantity
+    partSkidGroups[key].qty += parseFloat(row.QTY1 || row.qty1 || 0);
+
+    // Track unique box numbers per PART+SKID combination (critical for correct BOX counting)
+    const ctns = row.CTNS || row.ctns;
+    if (ctns !== null && ctns !== undefined) {
+      partSkidGroups[key].boxNumbers.add(ctns);
+    }
+  });
+
+  // Transform groups into line items following the example report format
+  return Object.values(partSkidGroups).map(group => ({
+    part: group.part,                              // PART
+    clientPart: group.clientPart,                 // PART CLIENT
+    description: group.description,               // DESCRIPTION
+    po: group.po,                                 // PO
+    qty: group.qty,                               // QTY 
+    uom: group.uom,                               // UOM
+    boxCount: group.boxNumbers.size,              // BOX
+    origin: group.origin,                         // ORIGIN
+    qtyPerSet: group.qtyPerSet,                   // QTY PER SET
+    weight: group.weight * group.qty,             // TOTAL WEIGHT (LBS)
+    unitCost: group.unitCost,                     // UNIT COST
+    labor: group.labor,                           // LABOR
+    totalCost: (group.unitCost + group.labor) * group.qty, // TOTAL COST
+    skid: group.skid                              // SKID
+  }));
+};
+
+// Calculate subtotals for the report
+const calculateSubtotals = (lineItems) => {
+  if (!lineItems || lineItems.length === 0) {
+    return {
+      quantity: 0,
+      boxes: 0,
+      weight: 0,
+      totalCost: 0,
+      skids: 0
+    };
+  }
+  
+  // Sum quantities, box counts, weights, and costs
+  const quantity = lineItems.reduce((sum, item) => sum + item.qty, 0);
+  const boxes = lineItems.reduce((sum, item) => sum + item.boxCount, 0);
+  const weight = lineItems.reduce((sum, item) => sum + item.weight, 0);
+  const totalCost = lineItems.reduce((sum, item) => sum + item.totalCost, 0);
+  
+  // Count unique SKID numbers
+  const uniqueSkids = new Set(lineItems.map(item => item.skid));
+  const skids = uniqueSkids.size;
+  
+  return {
+    quantity,
+    boxes,
+    weight,
+    totalCost,
+    skids
+  };
+};
+
+// Build the packaging summary section according to the example report format
+const constructPackagingSummary = (rawData, packagingMaterials) => {
+  // Filter to include only identified packaging materials
+  const packagingData = rawData.filter(row => {
+    const part = row.PART || row.part;
+    return part && packagingMaterials.includes(part);
+  });
+  
+  // Group by packaging type and sum quantities
+  const packagingGroups = {};
+  
+  packagingData.forEach(row => {
+    const part = row.PART || row.part;
+    
+    if (!packagingGroups[part]) {
+      packagingGroups[part] = {
+        part,
+        description: row.DESCRIPTION || row.description || part,
+        qty: 0,
+        boxCount: 0
+      };
+    }
+    
+    // Accumulate quantity (shown in \"Quantity\" column in the example report)
+    packagingGroups[part].qty += parseFloat(row.QTY1 || row.qty1 || 0);
+    
+    // In the example, KWPL-PALLET shows 8 and KW16.5X18X24 shows 138 in the quantity column
+    // This suggests that for packaging, boxCount might not be important
+    // We'll still maintain it for compatibility
+    const ctns = row.CTNS || row.ctns;
+    if (ctns !== null && ctns !== undefined) {
+      packagingGroups[part].boxCount += 1;
+    }
+  });
+  
+  return Object.values(packagingGroups);
+};
+
+// Make a cell editable
+// Make a cell editable
+const makeEditable = (event) => {
+  // Make the cell editable
+  const cell = event.target;
+  const originalValue = cell.textContent;
+  
+  // Store original value for potential revert
+  cell.dataset.originalValue = originalValue;
+  
+  // Make editable and focus
+  cell.contentEditable = true;
+  cell.focus();
+  
+  // Add event listeners for finish editing
+  cell.addEventListener('blur', finishEditing);
+  cell.addEventListener('keydown', handleEditKeydown);
+};
+
+// Finish editing a cell
+const finishEditing = (event) => {
+  const cell = event.target;
+  const newValue = cell.textContent;
+  const originalValue = cell.dataset.originalValue;
+  const rowIndex = cell.dataset.rowIndex;
+  const column = cell.dataset.column;
+  
+  // Store the edited value
+  if (newValue !== originalValue) {
+    if (!editedCells.value[rowIndex]) {
+      editedCells.value[rowIndex] = {};
+    }
+    editedCells.value[rowIndex][column] = newValue;
+  }
+  
+  // Remove editable state
+  cell.contentEditable = false;
+  
+  // Remove event listeners
+  cell.removeEventListener('blur', finishEditing);
+  cell.removeEventListener('keydown', handleEditKeydown);
+};
+
+// Handle keydown events during editing
+const handleEditKeydown = (event) => {
+  // Handle Enter key to finish editing
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    event.target.blur();
+  }
+  
+  // Handle Escape key to cancel editing
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    event.target.textContent = event.target.dataset.originalValue;
+    event.target.blur();
+  }
+};
+// Fixed exportToExcel function
+const exportToExcel = async () => {
+if (!reportData.value) return;
+
+try {
+// Create a new workbook
+const workbook = new ExcelJS.Workbook();
+const worksheet = workbook.addWorksheet('Shipment Report');
+
+// Create header rows
+worksheet.addRow(['Client Name', reportData.value.header.clientName, '', 'Export Date', reportData.value.header.exportDate]);
+worksheet.addRow(['From', reportData.value.header.from, '', 'Shipment #', reportData.value.header.shipmentNumber]);
+worksheet.addRow(['To', reportData.value.header.to, '', '', '']);
+worksheet.addRow(['', '', '', '', '']); // Empty row for spacing
+
+// Create column headers
+const columnHeaders = [
+'PART', 'PART CLIENT', 'DESCRIPTION', 'PO', 'QTY', 'UOM', 'BOX',
+'ORIGIN', 'QTY PER SET', 'TOTAL WEIGHT (LBS)', 'UNIT COST', 'LABOR', 'TOTAL COST', 'SKID'
+];
+worksheet.addRow(columnHeaders);
+
+// Style the header row
+const headerRow = worksheet.getRow(5);
+headerRow.font = { bold: true };
+
+// Add data rows
+reportData.value.lineItems.forEach((item, index) => {
+const rowEdits = editedCells.value[index] || {};
+
+worksheet.addRow([
+rowEdits.part || item.part,
+rowEdits.clientPart || item.clientPart,
+rowEdits.description || item.description,
+rowEdits.po || item.po,
+rowEdits.qty || item.qty,
+rowEdits.uom || item.uom,
+rowEdits.boxCount || item.boxCount,
+rowEdits.origin || item.origin,
+rowEdits.qtyPerSet || item.qtyPerSet,
+rowEdits.weight || item.weight,
+rowEdits.unitCost || item.unitCost,
+rowEdits.labor || item.labor,
+rowEdits.totalCost || item.totalCost,
+rowEdits.skid || item.skid
+]);
+});
+
+// Add subtotal row
+worksheet.addRow([
+'', '', '', 'Total',
+reportData.value.subtotals.quantity,
+'',
+reportData.value.subtotals.boxes,
+'',
+'',
+reportData.value.subtotals.weight,
+'',
+'',
+reportData.value.subtotals.totalCost,
+reportData.value.subtotals.skids
+]);
+
+// Style the subtotal row
+const subtotalRow = worksheet.getRow(worksheet.rowCount);
+subtotalRow.font = { bold: true };Row(worksheet.rowCount);
+subtotalRow.font = { bold: true };
+
+// Add empty row for spacing
+worksheet.addRow(['', '', '', '', '']);
+
+// Add packaging section header
+worksheet.addRow(['', '', '', '', '', 'Packaging', 'Quantity']);
+const packagingHeaderRow = worksheet.getRow(worksheet.rowCount);
+packagingHeaderRow.font = { bold: true };
+
+// Add packaging rows
+reportData.value.packagingSection.forEach(item => {
+worksheet.addRow(['', '', '', '', '', item.description, item.qty]);
+});
+
+// Format number columnslRow.font = { bold: true };
+    
+    // Add empty row for spacing
+    worksheet.addRow(['', '', '', '', '']);
+    
+    // Add packaging section header
+    worksheet.addRow(['', '', '', '', '', 'Packaging', 'Quantity']);
+    const packagingHeaderRow = worksheet.getRow(worksheet.rowCount);
+    packagingHeaderRow.font = { bold: true };
+    
+    // Add packaging rows
+    reportData.value.packagingSection.forEach(item => {
+      worksheet.addRow(['', '', '', '', '', item.boxCount, item.qty]);
+    });
+    
+    // Format number columns
+    worksheet.getColumn(10).numFmt = '0.00'; // TOTAL WEIGHT
+    worksheet.getColumn(11).numFmt = '0.00'; // UNIT COST
+    worksheet.getColumn(12).numFmt = '0.00'; // LABOR
+    worksheet.getColumn(13).numFmt = '0.00'; // TOTAL COST
+    
+    // Auto-size columns
+    worksheet.columns.forEach(column => {
+      column.width = 15;
+    });
+    
+    // Generate file name
+    const fileName = `Shipment_Report_${reportData.value.header.shipmentNumber}.xlsx`;
+    
+    // Write file and trigger download
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = window.URL.createObjectURL(blob);
+    
+    // Create a link and trigger download
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.click();
+    
+    // Clean up
+    window.URL.revokeObjectURL(url);
+  } catch (error) {
+    console.error('Error exporting to Excel:', error);
+    alert('Failed to export report: ' + error.message);
+  }
+};
+
+// For testing purposes - use sample data if needed
+const useSampleData = ref(false);
+const toggleSampleData = () => {
+  useSampleData.value = !useSampleData.value;
+  if (useSampleData.value && props.declaration) {
+    // Use sample data instead of API call
+    reportData.value = getSampleReportData();
+  } else if (props.declaration) {
+    // Fetch real data
+    fetchReportData(props.declaration);
+  }
+};
+
+// Sample data function for testing
+const getSampleReportData = () => {
+  // Return a sample report structure for testing
+  return {
+    header: {
+      clientName: 'Sample Company',
+      from: 'Sample Sender',
+      to: 'Sample Recipient',
+      exportDate: '2023-01-01',
+      shipmentNumber: '123'
+    },
+    lineItems: [
+      {
+        part: 'PART-001',
+        clientPart: 'CLIENT-001',
+        description: 'Sample Product 1',
+        po: 'PO-001',
+        qty: 100,
+        uom: 'PZ',
+        boxCount: 5,
+        origin: 'US',
+        qtyPerSet: 1,
+        weight: 500,
+        unitCost: 10,
+        labor: 2,
+        totalCost: 1200,
+        skid: '1'
+      },
+      {
+        part: 'PART-002',
+        clientPart: 'CLIENT-002',
+        description: 'Sample Product 2',
+        po: 'PO-002',
+        qty: 200,
+        uom: 'PZ',
+        boxCount: 10,
+        origin: 'MX',
+        qtyPerSet: 1,
+        weight: 1000,
+        unitCost: 15,
+        labor: 3,
+        totalCost: 3600,
+        skid: '2'
+      }
+    ],
+    subtotals: {
+      quantity: 300,
+      boxes: 15,
+      weight: 1500,
+      totalCost: 4800,
+      skids: 2
+    },
+    packagingSection: [
+      {
+        part: 'PACKAGING-001',
+        description: 'Cardboard Box',
+        qty: 15,
+        boxCount: 0
+      },
+      {
+        part: 'PACKAGING-002',
+        description: 'Pallet',
+        qty: 2,
+        boxCount: 0
+      }
+    ]
+  };
+};
+</script>
+
+<template>
+  <div class="cover-page-container">
+    <div v-if="!props.declaration" class="no-selection">
+      <h2>Cover Page</h2>
+      <p>Please select a declaration from the Declaration Listing tab to view its cover page.</p>
+      <p class="debug-info">Debug: No declaration selected</p>
+    </div>
+    
+    <div v-else>
+      <!-- Debug information -->
+      <div class="debug-section">
+        <h3>Debug Information</h3>
+        <p>Selected Declaration ID: {{ props.declaration.id }}</p>
+        <p>Selected Declaration VISA: {{ props.declaration.visa }}</p>
+        <p>Loading State: {{ isLoading ? 'Loading...' : 'Not Loading' }}</p>
+        <p>Error State: {{ hasError ? 'Error: ' + errorMessage : 'No Errors' }}</p>
+        <p>Report Data: {{ reportData ? 'Available' : 'Not Available' }}</p>
+      </div>
+      
+      <div class="report-controls">
+        <h2>Shipment Report</h2>
+        <div class="buttons">
+          <button @click="toggleSampleData" class="toggle-button">
+            {{ useSampleData ? 'Use API Data' : 'Use Sample Data' }}
+          </button>
+          <button @click="exportToExcel" class="export-button" :disabled="!reportData">
+            Download XLSX
+          </button>
+        </div>
+      </div>
+      
+      <div v-if="isLoading" class="loading-indicator">
+        <p>Loading report data...</p>
+      </div>
+      
+      <div v-else-if="hasError" class="error-message">
+        <p>{{ errorMessage }}</p>
+        <button @click="fetchReportData(props.declaration)" class="retry-button">
+          Retry
+        </button>
+      </div>
+      
+      <div v-else-if="reportData" class="report-container">
+        <!-- Header section -->
+        <table class="report-header-table">
+          <tbody>
+            <tr>
+              <td>Client Name</td>
+              <td>{{ reportData.header?.clientName || 'Unknown' }}</td>
+              <td></td>
+              <td>Export Date</td>
+              <td>{{ reportData.header?.exportDate || 'Unknown' }}</td>
+            </tr>
+            <tr>
+              <td>From</td>
+              <td>{{ reportData.header?.from || 'Unknown' }}</td>
+              <td></td>
+              <td>Shipment #</td>
+              <td>{{ reportData.header?.shipmentNumber || 'Unknown' }}</td>
+            </tr>
+            <tr>
+              <td>To</td>
+              <td>{{ reportData.header?.to || 'Unknown' }}</td>
+              <td></td>
+              <td></td>
+              <td></td>
+            </tr>
+          </tbody>
+        </table>
+        
+        <!-- Main report table -->
+        <table class="report-main-table">
+          <thead>
+            <tr>
+              <th>PART</th>
+              <th>PART CLIENT</th>
+              <th>DESCRIPTION</th>
+              <th>PO</th>
+              <th>QTY</th>
+              <th>UOM</th>
+              <th>BOX</th>
+              <th>ORIGIN</th>
+              <th>QTY PER SET</th>
+              <th>TOTAL WEIGHT (LBS)</th>
+              <th>UNIT COST</th>
+              <th>LABOR</th>
+              <th>TOTAL COST</th>
+              <th>SKID</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- Line items -->
+            <tr v-for="(item, index) in reportData.lineItems" :key="index">
+              <td @click="makeEditable" :data-row-index="index" data-column="part">{{ editedCells[index]?.part || item.part }}</td>
+              <td @click="makeEditable" :data-row-index="index" data-column="clientPart">{{ editedCells[index]?.clientPart || item.clientPart }}</td>
+              <td @click="makeEditable" :data-row-index="index" data-column="description">{{ editedCells[index]?.description || item.description }}</td>
+              <td @click="makeEditable" :data-row-index="index" data-column="po">{{ editedCells[index]?.po || item.po }}</td>
+              <td @click="makeEditable" :data-row-index="index" data-column="qty">{{ editedCells[index]?.qty || item.qty }}</td>
+              <td @click="makeEditable" :data-row-index="index" data-column="uom">{{ editedCells[index]?.uom || item.uom }}</td>
+              <td @click="makeEditable" :data-row-index="index" data-column="boxCount">{{ editedCells[index]?.boxCount || item.boxCount }}</td>
+              <td @click="makeEditable" :data-row-index="index" data-column="origin">{{ editedCells[index]?.origin || item.origin }}</td>
+              <td @click="makeEditable" :data-row-index="index" data-column="qtyPerSet">{{ editedCells[index]?.qtyPerSet || item.qtyPerSet }}</td>
+              <td @click="makeEditable" :data-row-index="index" data-column="weight">{{ editedCells[index]?.weight || item.weight }}</td>
+              <td @click="makeEditable" :data-row-index="index" data-column="unitCost">{{ editedCells[index]?.unitCost || item.unitCost }}</td>
+              <td @click="makeEditable" :data-row-index="index" data-column="labor">{{ editedCells[index]?.labor || item.labor }}</td>
+              <td>{{ editedCells[index]?.totalCost || item.totalCost }}</td>
+              <td @click="makeEditable" :data-row-index="index" data-column="skid">{{ editedCells[index]?.skid || item.skid }}</td>
+            </tr>
+            
+            <!-- Subtotal row -->
+            <tr class="subtotal-row">
+              <td></td>
+              <td></td>
+              <td></td>
+              <td><strong>Total</strong></td>
+              <td><strong>{{ reportData.subtotals.quantity }}</strong></td>
+              <td></td>
+              <td><strong>{{ reportData.subtotals.boxes }}</strong></td>
+              <td></td>
+              <td></td>
+              <td><strong>{{ reportData.subtotals.weight }}</strong></td>
+              <td></td>
+              <td></td>
+              <td><strong>{{ reportData.subtotals.totalCost }}</strong></td>
+              <td><strong>{{ reportData.subtotals.skids }}</strong></td>
+            </tr>
+          </tbody>
+        </table>
+        
+        <!-- Packaging section -->
+        <h3 class="packaging-title">Packaging Materials</h3>
+        <table class="packaging-table">
+          <thead>
+            <tr>
+              <th>Part</th>
+              <th>Description</th>
+              <th>Box's</th>
+              <th>Quantity</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(item, index) in reportData.packagingSection" :key="index">
+              <td>{{ item.part }}</td>
+              <td>{{ item.description }}</td>
+              <td>{{ item.boxCount }}</td>
+              <td>{{ item.qty }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.cover-page-container {
+  width: 100%;
+  margin-top: 20px;
+}
+
+.no-selection {
+  text-align: center;
+  padding: 40px 0;
+  color: #666;
+}
+
+.debug-section {
+  background-color: #f5f5f5;
+  padding: 10px;
+  margin-bottom: 20px;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+
+.debug-info {
+  color: #999;
+  font-size: 0.9em;
+}
+
+.report-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.report-controls .buttons {
+  display: flex;
+  gap: 10px;
+}
+
+.toggle-button, .export-button, .retry-button {
+  background-color: #3273dc;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background-color 0.3s;
+}
+
+.toggle-button:hover, .export-button:hover, .retry-button:hover {
+  background-color: #276cda;
+}
+
+.export-button:disabled {
+  background-color: #b5b5b5;
+  cursor: not-allowed;
+}
+
+.retry-button {
+  background-color: #cc0f35;
+}
+
+.retry-button:hover {
+  background-color: #b10c2e;
+}
+
+.loading-indicator, .error-message {
+  text-align: center;
+  padding: 40px 0;
+}
+
+.error-message {
+  color: #cc0f35;
+}
+
+.report-container {
+  margin-top: 20px;
+}
+
+.report-header-table {
+  width: 100%;
+  margin-bottom: 20px;
+  border-collapse: collapse;
+}
+
+.report-header-table td {
+  padding: 8px;
+  border: 1px solid #e0e0e0;
+}
+
+.report-header-table td:first-child {
+  font-weight: bold;
+  width: 120px;
+}
+
+.report-main-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 30px;
+}
+
+.report-main-table th,
+.report-main-table td {
+  padding: 8px;
+  border: 1px solid #e0e0e0;
+  text-align: left;
+}
+
+.report-main-table th {
+  background-color: #f5f5f5;
+  font-weight: bold;
+}
+
+.report-main-table td[contenteditable="true"] {
+  background-color: #fff9e6;
+  cursor: text;
+}
+
+.subtotal-row {
+  background-color: #f5f5f5;
+  font-weight: bold;
+}
+
+.packaging-title {
+  margin-top: 30px;
+  margin-bottom: 10px;
+  font-size: 18px;
+  font-weight: bold;
+}
+
+.packaging-table {
+  width: 50%;
+  border-collapse: collapse;
+  margin-bottom: 20px;
+}
+
+.packaging-table th,
+.packaging-table td {
+  padding: 8px;
+  border: 1px solid #e0e0e0;
+  text-align: left;
+}
+
+.packaging-table th {
+  background-color: #f5f5f5;
+  font-weight: bold;
+}
+</style>
