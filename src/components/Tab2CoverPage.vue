@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch, computed, onMounted } from 'vue';
+import { ref, watch, computed, onMounted, nextTick } from 'vue';
 import axios from 'axios';
 import ExcelJS from 'exceljs';
 
@@ -18,6 +18,9 @@ const errorMessage = ref('');
 const reportData = ref(null);
 const editedCells = ref({});
 const showDebug = ref(false); // Controls visibility of debug section
+const printMode = ref(false);
+const generatedTimestamp = ref(new Date().toLocaleString());
+const hideOriginColumn = ref(false); // Controls visibility of ORIGIN column
 
 // Build SQL command using the environment variable and replacing the placeholder
 const buildSqlCommand = (declaration) => {
@@ -728,6 +731,20 @@ const toggleSampleData = () => {
   }
 };
 
+// Function to handle report printing
+const printReport = () => {
+  printMode.value = true;
+  generatedTimestamp.value = new Date().toLocaleString();
+  // Use nextTick to ensure reactivity updates before printing
+  nextTick(() => {
+    window.print();
+    // Reset after print dialog closes
+    setTimeout(() => {
+      printMode.value = false;
+    }, 500);
+  });
+};
+
 // Sample data function for testing
 const getSampleReportData = () => {
   // Return a sample report structure for testing
@@ -822,15 +839,26 @@ const getSampleReportData = () => {
 <p>Report Data: {{ reportData ? 'Available' : 'Not Available' }}</p>
 </div>
       
-      <div class="report-controls">
+      <div class="report-controls" :class="{ 'print-hidden': printMode }">
         <h2>Shipment Report</h2>
-        <div class="buttons">
-          <button @click="toggleSampleData" class="toggle-button">
-            {{ useSampleData ? 'Use API Data' : 'Use Sample Data' }}
-          </button>
-          <button @click="exportToExcel" class="export-button" :disabled="!reportData">
-            Download XLSX
-          </button>
+        <div class="controls-wrapper">
+          <div class="buttons">
+            <button @click="toggleSampleData" class="toggle-button">
+              {{ useSampleData ? 'Use API Data' : 'Use Sample Data' }}
+            </button>
+            <button @click="exportToExcel" class="export-button" :disabled="!reportData">
+              Download XLSX
+            </button>
+            <button @click="printReport" class="print-button" :disabled="!reportData">
+              Print Report
+            </button>
+          </div>
+          <div class="view-options">
+            <label class="checkbox-control">
+              <input type="checkbox" v-model="hideOriginColumn">
+              <span>Hide Origin Column</span>
+            </label>
+          </div>
         </div>
       </div>
       
@@ -845,26 +873,35 @@ const getSampleReportData = () => {
         </button>
       </div>
       
-      <div v-else-if="reportData" class="report-container">
+      <div v-else-if="reportData" class="report-container" :class="{ 'print-mode': printMode }">
+        <!-- Report Header with metadata -->
+        <div class="report-header">
+          <h2>Shipment Report</h2>
+          <div class="report-metadata">
+            <span>Generated: {{ generatedTimestamp }}</span>
+            <span class="report-id">Declaration ID: {{ props.declaration ? props.declaration.id : 'N/A' }}</span>
+          </div>
+        </div>
+        
         <!-- Header section -->
-        <table class="report-table">
+        <table class="report-table header-table">
           <tbody>
             <tr>
-              <td><strong>Client Name</strong></td>
+              <td class="header-label">Client Name</td>
               <td>{{ reportData.header.clientName }}</td>
               <td></td>
-              <td><strong>Export Date</strong></td>
+              <td class="header-label">Export Date</td>
               <td>{{ reportData.header.exportDate }}</td>
             </tr>
             <tr>
-              <td><strong>From</strong></td>
+              <td class="header-label">From</td>
               <td>{{ reportData.header.from }}</td>
               <td></td>
-              <td><strong>Shipment #</strong></td>
+              <td class="header-label">Shipment #</td>
               <td>{{ reportData.header.shipmentNumber }}</td>
             </tr>
             <tr>
-              <td><strong>To</strong></td>
+              <td class="header-label">To</td>
               <td>{{ reportData.header.to }}</td>
               <td></td>
               <td></td>
@@ -885,7 +922,7 @@ const getSampleReportData = () => {
                 <th>QTY</th>
                 <th>UOM</th>
                 <th>BOX</th>
-                <th class="hide-mobile">ORIGIN</th>
+                <th :class="{ 'hide-mobile': true, 'hide-origin': hideOriginColumn }">ORIGIN</th>
                 <th class="hide-mobile">QTY PER SET</th>
                 <th>TOTAL WEIGHT (LBS)</th>
                 <th class="hide-mobile">UNIT COST</th>
@@ -903,7 +940,7 @@ const getSampleReportData = () => {
                 <td class="editable" @click="makeEditable" :data-row-index="index" data-column="qty">{{ item.qty }}</td>
                 <td>{{ item.uom }}</td>
                 <td class="editable" @click="makeEditable" :data-row-index="index" data-column="boxCount">{{ item.boxCount }}</td>
-                <td class="editable hide-mobile" @click="makeEditable" :data-row-index="index" data-column="origin">{{ item.origin }}</td>
+                <td class="editable hide-mobile" :class="{ 'hide-origin': hideOriginColumn }" @click="makeEditable" :data-row-index="index" data-column="origin">{{ item.origin }}</td>
                 <td class="editable hide-mobile" @click="makeEditable" :data-row-index="index" data-column="qtyPerSet">{{ item.qtyPerSet }}</td>
                 <td class="editable" @click="makeEditable" :data-row-index="index" data-column="weight">{{ item.weight.toFixed(2) }}</td>
                 <td class="editable hide-mobile" @click="makeEditable" :data-row-index="index" data-column="unitCost">{{ item.unitCost.toFixed(2) }}</td>
@@ -912,58 +949,117 @@ const getSampleReportData = () => {
                 <td>{{ item.skid }}</td>
               </tr>
               <tr class="subtotal-row">
-                <td colspan="3"></td>
-                <td><strong>Total</strong></td>
-                <td><strong>{{ reportData.subtotals.quantity }}</strong></td>
-                <td></td>
-                <td><strong>{{ reportData.subtotals.boxes }}</strong></td>
-                <td class="hide-mobile"></td>
-                <td class="hide-mobile"></td>
-                <td><strong>{{ reportData.subtotals.weight.toFixed(2) }}</strong></td>
-                <td class="hide-mobile"></td>
-                <td class="hide-mobile"></td>
-                <td><strong>{{ reportData.subtotals.totalCost.toFixed(2) }}</strong></td>
-                <td><strong>{{ reportData.subtotals.skids }}</strong></td>
+                <td colspan="3" class="subtotal-spacer"></td>
+                <td class="subtotal-label">Total</td>
+                <td class="subtotal-value">{{ reportData.subtotals.quantity }}</td>
+                <td class="subtotal-spacer"></td>
+                <td class="subtotal-value">{{ reportData.subtotals.boxes }}</td>
+                <td class="hide-mobile subtotal-spacer" :class="{ 'hide-origin': hideOriginColumn }"></td>
+                <td class="hide-mobile subtotal-spacer"></td>
+                <td class="subtotal-value">{{ reportData.subtotals.weight.toFixed(2) }}</td>
+                <td class="hide-mobile subtotal-spacer"></td>
+                <td class="hide-mobile subtotal-spacer"></td>
+                <td class="subtotal-value">{{ reportData.subtotals.totalCost.toFixed(2) }}</td>
+                <td class="subtotal-value">{{ reportData.subtotals.skids }}</td>
               </tr>
             </tbody>
           </table>
         </div>
 
         <!-- Packaging section -->
-        <table class="packaging-table">
-          <thead>
-            <tr>
-              <td colspan="5"></td>
-              <td>Box's</td>
-              <td>Quantity</td>
-            </tr>
-          </thead>
-          <tbody>
-            <!-- Packaging rows -->
-            <tr v-for="item in reportData.packagingSection" :key="item.part"
-              :class="{ 'total-row': item.part === 'Total' }">
-              <td colspan="5">{{ item.description }}</td>
-              <td>{{ item.boxCount }}</td>
-              <td>{{ item.qty }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <div class="packaging-section">
+          <h3 class="packaging-title">Packaging Materials</h3>
+          <table class="packaging-table">
+            <thead>
+              <tr>
+                <th class="packaging-desc-header">Description</th>
+                <th class="packaging-part-header">Packaging</th>
+                <th class="packaging-qty-header">Quantity</th>
+              </tr>
+            </thead>
+            <tbody>
+              <!-- Packaging rows -->
+              <tr v-for="item in reportData.packagingSection" :key="item.part"
+                :class="{ 'total-row': item.part === 'Total' }">
+                <td class="packaging-desc">{{ item.description }}</td>
+                <td class="packaging-part">{{ item.part !== 'Total' ? item.part : '' }}</td>
+                <td class="packaging-qty">{{ item.qty }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
+/* Report container styling */
 .report-container {
   max-width: 100%;
   overflow-x: auto;
   position: relative;
+  background-color: #fff;
+  box-shadow: 0 2px 15px rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+  padding: 25px;
+  margin: 15px 0;
+  /* Optional subtle paper texture - could be enabled if desired */
+  /* background-image: url('data:image/png;base64,...'); */
+  /* background-blend-mode: overlay; */
 }
 
+/* Report header styling */
+.report-header {
+  margin-bottom: 20px;
+  border-bottom: 2px solid #4a4a4a;
+  padding-bottom: 15px;
+}
+
+.report-header h2 {
+  font-size: 24px;
+  margin-bottom: 8px;
+  color: #2c3e50;
+}
+
+.report-metadata {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+  color: #666;
+}
+
+.report-id {
+  font-weight: 600;
+}
+
+/* Table styling */
 .report-table {
   width: 100%;
   border-collapse: collapse;
   min-width: 1200px; /* Ensure minimum width for content */
+  font-family: 'Noto Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  margin-bottom: 20px;
+}
+
+/* Header table specific styling */
+.header-table {
+  margin-bottom: 30px;
+  border: 1px solid #e0e0e0;
+  width: 80%;
+  margin-left: auto;
+  margin-right: auto;
+  min-width: 700px; /* Ensure minimum width for content while still allowing for responsive behavior */
+}
+
+.header-label {
+  font-weight: 700;
+  font-size: 16px;
+  color: #333;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  background-color: #f5f5f5;
+  padding: 10px;
 }
 
 .report-table th {
@@ -975,10 +1071,12 @@ const getSampleReportData = () => {
   text-align: left;
   border-bottom: 2px solid #dee2e6;
   white-space: nowrap;
+  font-weight: 600;
+  color: #2c3e50;
 }
 
 .report-table td {
-  padding: 8px;
+  padding: 10px 8px;
   border-bottom: 1px solid #dee2e6;
   vertical-align: top;
 }
@@ -991,6 +1089,137 @@ const getSampleReportData = () => {
   max-width: 300px;
   white-space: normal;
   word-wrap: break-word;
+}
+
+/* Editable cells styling */
+.editable {
+  border-bottom: 1px dotted #999;
+  transition: background-color 0.2s;
+}
+
+.editable:hover {
+  background-color: rgba(65, 184, 255, 0.05);
+  cursor: pointer;
+}
+
+.subtotal-row {
+  background-color: #f0f7ff !important;
+  font-weight: 600;
+  border-top: 2px solid #b8daff;
+  border-bottom: 2px solid #b8daff;
+  height: 50px;
+}
+
+.subtotal-label {
+  text-transform: uppercase;
+  font-size: 15px;
+  color: #0056b3;
+  text-align: right;
+  padding-right: 15px;
+}
+
+.subtotal-value {
+  font-size: 15px;
+  font-weight: 700;
+  color: #0056b3;
+  text-align: center;
+}
+
+.subtotal-spacer {
+  background-color: #f8f9fa !important;
+}
+
+/* Controls wrapper */
+.controls-wrapper {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 15px;
+}
+
+/* View options styling */
+.view-options {
+  display: flex;
+  gap: 15px;
+}
+
+.checkbox-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 14px;
+}
+
+.checkbox-control input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+/* Hide origin column when toggled */
+.hide-origin {
+  display: none !important;
+}
+
+/* Buttons styling */
+.buttons {
+  display: flex;
+  gap: 10px;
+}
+
+.toggle-button {
+  background-color: #6c757d;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 8px 16px;
+  cursor: pointer;
+  transition: background-color 0.3s;
+}
+
+.toggle-button:hover {
+  background-color: #5a6268;
+}
+
+.export-button {
+  background-color: #007bff;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 8px 16px;
+  cursor: pointer;
+  transition: background-color 0.3s;
+}
+
+.export-button:hover {
+  background-color: #0069d9;
+}
+
+.export-button:disabled {
+  background-color: #b5b5b5;
+  cursor: not-allowed;
+}
+
+.print-button {
+  background-color: #28a745;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 8px 16px;
+  cursor: pointer;
+  transition: background-color 0.3s;
+}
+
+.print-button:hover {
+  background-color: #218838;
+}
+
+.print-button:disabled {
+  background-color: #b5b5b5;
+  cursor: not-allowed;
 }
 
 /* Responsive design */
@@ -1021,6 +1250,146 @@ const getSampleReportData = () => {
   
   .report-table .description-cell {
     max-width: 150px;
+  }
+}
+
+/* Packaging section styling */
+.packaging-section {
+  width: 80%;
+  margin: 30px auto 20px;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  padding: 20px;
+  background-color: #f9f9f9;
+}
+
+.packaging-title {
+  text-align: center;
+  margin-bottom: 15px;
+  font-size: 18px;
+  font-weight: 600;
+  color: #2c3e50;
+}
+
+.packaging-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 auto;
+}
+
+.packaging-table th {
+  background-color: #f1f1f1;
+  padding: 10px;
+  text-align: center;
+  border-bottom: 2px solid #ddd;
+  font-weight: 600;
+}
+
+.packaging-table td {
+  padding: 8px 10px;
+  text-align: center;
+  border-bottom: 1px solid #ddd;
+}
+
+.packaging-desc {
+  text-align: left;
+}
+
+.packaging-part, .packaging-qty {
+  width: 20%;
+}
+
+.packaging-part {
+  font-family: monospace;
+  letter-spacing: -0.5px;
+}
+
+.packaging-table .total-row {
+  font-weight: bold;
+  background-color: #f5f5f5;
+}
+
+/* Print-specific styling */
+@media print {
+  /* Set landscape orientation */
+  @page {
+    size: landscape;
+    margin: 0.5cm;
+  }
+  
+  /* Hide everything except the report container */
+  body * {
+    visibility: hidden;
+  }
+  
+  .report-container,
+  .report-container * {
+    visibility: visible;
+  }
+  
+  .report-container {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    box-shadow: none;
+    padding: 10px;
+    margin: 0;
+    border-radius: 0;
+    background-color: white;
+  }
+  
+  .print-hidden,
+  .debug-toggle,
+  .debug-section,
+  .report-controls,
+  .no-selection {
+    display: none !important;
+  }
+  
+  /* Adjust table for better fit in landscape */
+  .report-table {
+    page-break-inside: avoid;
+    font-size: 11px;
+    width: 100%;
+    min-width: auto !important; /* Override fixed min-width */
+  }
+  
+  .table-wrapper {
+    overflow: visible !important;
+    width: 100%;
+  }
+  
+  /* Reduce some cell padding to fit more content */
+  .report-table td, 
+  .report-table th {
+    padding: 5px;
+  }
+  
+  /* Ensure good page breaks */
+  .report-header,
+  .header-table,
+  .packaging-table {
+    page-break-after: avoid;
+    width: 100% !important;
+    min-width: auto !important;
+  }
+  
+  /* Make sure subtotal row stays with data */
+  .subtotal-row {
+    page-break-before: avoid;
+  }
+  
+  /* Remove hover effects for editable fields in print */
+  .editable {
+    border-bottom: none;
+  }
+  
+  /* Ensure packaging section fits well */
+  .packaging-section {
+    width: 100% !important;
+    margin: 20px 0;
+    border: none;
   }
 }
 </style>
