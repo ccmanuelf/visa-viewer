@@ -65,25 +65,14 @@ const showNotification = (message, type = 'info') => {
   }, 5000);
 };
 
-// Add near your other methods in the <script setup> section
-const testEventFlow = () => {
-  console.log('Testing event flow');
-  const testData = { id: 999, visa: 'TEST' };
-  handleRowSelected(testData);
-};
 
-// Add at the end of your <script setup> section
-defineExpose({
-  testEventFlow
-});
 </script>
 
 <template>
   <div class="app-container">
     <header class="app-header">
       <h1>VISA Declaration Viewer</h1>
-      <!-- Add test button here -->
-      <button @click="testEventFlow" class="button is-small is-info">Test Event Flow</button>
+      <!-- Test button hidden as no longer required -->
     </header>
     
     <!-- Notification component -->
