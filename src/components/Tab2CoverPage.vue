@@ -822,12 +822,13 @@ const exportToExcel = async () => {
     // Format number columns - adjust column indices based on whether ORIGIN is hidden
     const originOffset = hideOriginColumn.value ? 0 : 1;
     
-    worksheet.getColumn(9 + originOffset).numFmt = '0.00'; // TOTAL WEIGHT
-    worksheet.getColumn(10 + originOffset).numFmt = '0.00'; // UNIT COST
-    worksheet.getColumn(11 + originOffset).numFmt = '0.00'; // LABOR
-    worksheet.getColumn(12 + originOffset).numFmt = '0.00'; // TOTAL COST RM
-    worksheet.getColumn(13 + originOffset).numFmt = '0.00'; // TOTAL LABOR COST
-    worksheet.getColumn(14 + originOffset).numFmt = '0.00'; // TOTAL COST
+    worksheet.getColumn(8 + originOffset).numFmt = '0.0'; // QTY PER SET - single decimal
+    worksheet.getColumn(9 + originOffset).numFmt = '0.0000'; // TOTAL WEIGHT
+    worksheet.getColumn(10 + originOffset).numFmt = '[$\$]#,##0.0000'; // UNIT COST - currency format
+    worksheet.getColumn(11 + originOffset).numFmt = '[$\$]#,##0.0000'; // LABOR - currency format
+    worksheet.getColumn(12 + originOffset).numFmt = '[$\$]#,##0.0000'; // TOTAL COST RM - currency format
+    worksheet.getColumn(13 + originOffset).numFmt = '[$\$]#,##0.0000'; // TOTAL LABOR COST - currency format
+    worksheet.getColumn(14 + originOffset).numFmt = '[$\$]#,##0.0000'; // TOTAL COST - currency format
     
     // Auto-size columns
     worksheet.columns.forEach(column => {
@@ -1072,13 +1073,13 @@ const getSampleReportData = () => {
                 <th>UOM</th>
                 <th>BOX</th>
                 <th :class="{ 'hide-mobile': true, 'hide-origin': hideOriginColumn }">ORIGIN</th>
-                <th class="hide-mobile">QTY PER SET</th>
-                <th>{{ weightUnitLabel }}</th>
-                <th class="hide-mobile">UNIT COST</th>
+                <th class="hide-mobile wrap-header">QTY<br>PER SET</th>
+                <th class="wrap-header">TOTAL<br>{{ isUSMode ? 'WEIGHT (LBS)' : 'WEIGHT (KG)' }}</th>
+                <th class="hide-mobile wrap-header">UNIT<br>COST</th>
                 <th class="hide-mobile">LABOR</th>
-                <th class="hide-mobile">TOTAL COST RM</th>
-                <th class="hide-mobile">TOTAL LABOR COST</th>
-                <th>TOTAL COST</th>
+                <th class="hide-mobile wrap-header">TOTAL<br>COST RM</th>
+                <th class="hide-mobile wrap-header">TOTAL<br>LABOR COST</th>
+                <th class="wrap-header">TOTAL<br>COST</th>
                 <th>SKID</th>
               </tr>
             </thead>
@@ -1093,13 +1094,13 @@ const getSampleReportData = () => {
                 <td>{{ item.uom }}</td>
                 <td class="editable" @click="makeEditable" :data-row-index="index" data-column="boxCount">{{ item.boxCount }}</td>
                 <td class="editable hide-mobile" :class="{ 'hide-origin': hideOriginColumn }" @click="makeEditable" :data-row-index="index" data-column="origin">{{ item.origin }}</td>
-                <td class="editable hide-mobile" @click="makeEditable" :data-row-index="index" data-column="qtyPerSet">{{ item.qtyPerSet }}</td>
-                <td class="editable" @click="makeEditable" :data-row-index="index" data-column="weight">{{ getDisplayWeight(item.weight).toFixed(2) }}</td>
-                <td class="editable hide-mobile" @click="makeEditable" :data-row-index="index" data-column="unitCost">{{ item.unitCost.toFixed(2) }}</td>
-                <td class="editable hide-mobile" @click="makeEditable" :data-row-index="index" data-column="labor">{{ item.labor.toFixed(2) }}</td>
-                <td class="hide-mobile">{{ item.totalCostRm.toFixed(2) }}</td>
-                <td class="hide-mobile">{{ item.totalLaborCost.toFixed(2) }}</td>
-                <td>{{ item.totalCost.toFixed(2) }}</td>
+                <td class="editable hide-mobile" @click="makeEditable" :data-row-index="index" data-column="qtyPerSet">{{ Number.isInteger(item.qtyPerSet) ? item.qtyPerSet : item.qtyPerSet.toFixed(1) }}</td>
+                <td class="editable" @click="makeEditable" :data-row-index="index" data-column="weight">{{ getDisplayWeight(item.weight).toFixed(4) }}</td>
+                <td class="editable hide-mobile currency" @click="makeEditable" :data-row-index="index" data-column="unitCost">${{ item.unitCost.toFixed(4) }}</td>
+                <td class="editable hide-mobile currency" @click="makeEditable" :data-row-index="index" data-column="labor">${{ item.labor.toFixed(4) }}</td>
+                <td class="hide-mobile currency">${{ item.totalCostRm.toFixed(4) }}</td>
+                <td class="hide-mobile currency">${{ item.totalLaborCost.toFixed(4) }}</td>
+                <td class="currency">${{ item.totalCost.toFixed(4) }}</td>
                 <td>{{ item.skid }}</td>
               </tr>
               <tr class="subtotal-row">
@@ -1110,12 +1111,12 @@ const getSampleReportData = () => {
                 <td class="subtotal-value">{{ reportData.subtotals.boxes }}</td>
                 <td class="hide-mobile subtotal-spacer" :class="{ 'hide-origin': hideOriginColumn }"></td>
                 <td class="hide-mobile subtotal-spacer"></td>
-                <td class="subtotal-value">{{ getDisplayWeight(reportData.subtotals.weight).toFixed(2) }}</td>
+                <td class="subtotal-value">{{ getDisplayWeight(reportData.subtotals.weight).toFixed(4) }}</td>
                 <td class="hide-mobile subtotal-spacer"></td>
                 <td class="hide-mobile subtotal-spacer"></td>
-                <td class="hide-mobile subtotal-value">{{ reportData.subtotals.totalCostRm.toFixed(2) }}</td>
-                <td class="hide-mobile subtotal-value">{{ reportData.subtotals.totalLaborCost.toFixed(2) }}</td>
-                <td class="subtotal-value">{{ reportData.subtotals.totalCost.toFixed(2) }}</td>
+                <td class="hide-mobile subtotal-value currency">${{ reportData.subtotals.totalCostRm.toFixed(4) }}</td>
+                <td class="hide-mobile subtotal-value currency">${{ reportData.subtotals.totalLaborCost.toFixed(4) }}</td>
+                <td class="subtotal-value currency">${{ reportData.subtotals.totalCost.toFixed(4) }}</td>
                 <td class="subtotal-value">{{ reportData.subtotals.skids }}</td>
               </tr>
             </tbody>
@@ -1226,11 +1227,19 @@ const getSampleReportData = () => {
   background: #f8f9fa;
   z-index: 10;
   padding: 12px 8px;
-  text-align: left;
+  text-align: center;
+  vertical-align: middle;
   border-bottom: 2px solid #dee2e6;
   white-space: nowrap;
   font-weight: 600;
   color: #2c3e50;
+}
+
+.report-table th.wrap-header {
+  white-space: normal;
+  line-height: 1.2;
+  vertical-align: middle;
+  min-width: 80px;
 }
 
 .report-table td {
@@ -1241,6 +1250,11 @@ const getSampleReportData = () => {
 
 .report-table tr:nth-child(even) {
   background-color: rgba(0, 0, 0, 0.02);
+}
+
+.report-table .currency {
+  text-align: right;
+  font-family: 'Courier New', monospace;
 }
 
 .report-table .description-cell {
@@ -1494,26 +1508,90 @@ td.hide-origin {
     margin: 0.5cm;
   }
   
-  /* Hide everything except the report container */
-  body * {
-    visibility: hidden;
+  body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
   }
   
-  .report-container,
-  .report-container * {
-    visibility: visible;
+  /* Hide everything except the report container */
+  body > *:not(.report-container) {
+    display: none;
   }
   
   .report-container {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-    box-shadow: none;
-    padding: 10px;
-    margin: 0;
-    border-radius: 0;
-    background-color: white;
+    display: block !important;
+    position: relative !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0.5cm !important;
+    box-shadow: none !important;
+    background-color: white !important;
+    overflow: visible !important;
+    /* No transform to avoid side effects */
+  }
+  
+  /* Make sure all tables are properly sized */
+  .table-wrapper {
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow: visible !important;
+    page-break-inside: avoid !important;
+  }
+  
+  .report-table {
+    width: 100% !important; 
+    max-width: 100% !important;
+    table-layout: fixed !important;
+    font-size: 10px !important;
+    margin: 0 !important;
+    border-collapse: collapse !important;
+  }
+  
+  /* Adjust column widths for better print layout */
+  .report-table th, .report-table td {
+    padding: 4px 2px !important;
+    font-size: 10px !important;
+    max-width: none !important;
+  }
+  
+  /* Set specific column widths by priority */
+  .report-table .description-cell {
+    width: 16% !important;
+    max-width: 16% !important;
+    white-space: normal !important;
+    word-break: break-word !important;
+  }
+  
+  /* Part numbers */
+  .report-table th:nth-child(1), .report-table td:nth-child(1),
+  .report-table th:nth-child(2), .report-table td:nth-child(2) {
+    width: 7% !important;
+    max-width: 7% !important;
+  }
+  
+  /* Numeric columns that need more space for currency/decimals */
+  .report-table th:nth-child(10), .report-table td:nth-child(10),
+  .report-table th:nth-child(11), .report-table td:nth-child(11),
+  .report-table th:nth-child(12), .report-table td:nth-child(12),
+  .report-table th:nth-child(13), .report-table td:nth-child(13),
+  .report-table th:nth-child(14), .report-table td:nth-child(14),
+  .report-table th:nth-child(15), .report-table td:nth-child(15) {
+    width: 7% !important;
+    max-width: 7% !important;
+  }
+  
+  /* Small data columns */
+  .report-table th:nth-child(4), .report-table td:nth-child(4),
+  .report-table th:nth-child(5), .report-table td:nth-child(5),
+  .report-table th:nth-child(6), .report-table td:nth-child(6),
+  .report-table th:nth-child(7), .report-table td:nth-child(7),
+  .report-table th:nth-child(8), .report-table td:nth-child(8),
+  .report-table th:nth-child(9), .report-table td:nth-child(9),
+  .report-table th:nth-child(16), .report-table td:nth-child(16) {
+    width: 3.5% !important;
+    max-width: 3.5% !important;
   }
   
   .print-hidden,
@@ -1544,17 +1622,41 @@ td.hide-origin {
   }
   
   /* Ensure good page breaks */
-  .report-header,
+  .report-header {
+    page-break-after: avoid;
+    width: 80% !important;
+    min-width: auto !important;
+    margin: 0 auto !important;
+    padding-bottom: 10px !important;
+    border-bottom: 1px solid #ccc !important;
+    overflow: visible !important;
+  }
+  
   .header-table,
   .packaging-table {
     page-break-after: avoid;
-    width: 100% !important;
+    width: 80% !important;
     min-width: auto !important;
+    margin: 0 auto !important;
   }
   
-  /* Make sure subtotal row stays with data */
+  /* Make sure subtotal row stays with data and fix overlap */
   .subtotal-row {
     page-break-before: avoid;
+  }
+  
+  .subtotal-row td {
+    white-space: nowrap;
+    overflow: visible;
+    font-size: 10px;
+  }
+  
+  /* Ensure currency values don't overlap */
+  .currency {
+    white-space: nowrap;
+    overflow: visible;
+    font-size: 9px !important;
+    letter-spacing: -0.5px;
   }
   
   /* Remove hover effects for editable fields in print */
