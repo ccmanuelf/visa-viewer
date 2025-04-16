@@ -414,6 +414,7 @@ skid: skids,  // SKID from SKIDS
 part: part,   // PART
 clientPart: '',
 description: '',
+descriptionMx: '',  // Add MX description field
 po: row.LOT_NUM || row.lot_num || row.LOT || row.lot || '', // PO from LOT_NUM
 qty: 0,
 uom: row.UM_US || row.um_us || 'PZ', // UOM from UM_US
@@ -444,8 +445,13 @@ else if (row.MX_PART || row.mx_part) {
   }
 }
 
-// Use getDescription helper function for description determination
-partSkidGroups[key].description = getDescription(row);
+// Extract US description (column 80 or fallback to column 103)
+const usDesc = safeGet(row, 'DESCRIPTION', 'description');
+partSkidGroups[key].description = usDesc || safeGet(row, 'DESCRIPTION_CLIENT', 'description_client') || '';
+
+// Extract MX description (column 104 or fallback to column 80)
+const mxDesc = safeGet(row, 'DESC_CUMPLE_US', 'desc_cumple_us');
+partSkidGroups[key].descriptionMx = (mxDesc && mxDesc.trim() !== '') ? mxDesc : usDesc || '';
 }
 
 // Accumulate quantity - QTY from QTY1
@@ -462,7 +468,8 @@ partSkidGroups[key].boxNumbers.add(ctns);
 return Object.values(partSkidGroups).map(group => ({
 part: group.part,
 clientPart: group.clientPart,
-description: group.description,
+description: group.description,       // US description
+descriptionMx: group.descriptionMx,   // MX description
 po: group.po,
 qty: group.qty,
 uom: group.uom,
@@ -566,17 +573,27 @@ packagingData.forEach(row => {
 const part = row.PART || row.part;
 
 if (!packagingGroups[part]) {
-  // Get description based on current mode
-  let description = getDescription(row);
+  // Extract both US and MX descriptions
+  const usDesc = safeGet(row, 'DESCRIPTION', 'description');
+  const mxDesc = safeGet(row, 'DESC_CUMPLE_US', 'desc_cumple_us');
+  
+  // Prepare descriptions with fallbacks
+  let description = usDesc || '';
+  let descriptionMx = (mxDesc && mxDesc.trim() !== '') ? mxDesc : usDesc || '';
   
   // If no description found, use derived description as a fallback
   if (!description) {
     description = derivePackagingDescription(part);
   }
   
+  if (!descriptionMx) {
+    descriptionMx = description; // Use US description as fallback
+  }
+  
   packagingGroups[part] = {
     part,
-    description: description,
+    description: description,      // US description
+    descriptionMx: descriptionMx, // MX description
     qty: 0,
     boxCount: 0
   };
@@ -601,7 +618,8 @@ const totalQuantity = packagingItems.reduce((sum, item) => sum + item.qty, 0);
 // Add a total row
 packagingItems.push({
 part: 'Total',
-description: '',
+description: 'Total',
+descriptionMx: 'Total',
 qty: totalQuantity,
 boxCount: 0
 });
@@ -712,7 +730,7 @@ const exportToExcel = async () => {
       let rowData = [
         rowEdits.part || item.part,
         rowEdits.clientPart || item.clientPart,
-        rowEdits.description || item.description,
+        isUSMode.value ? (rowEdits.description || item.description) : (rowEdits.descriptionMx || item.descriptionMx),
         rowEdits.po || item.po,
         parseFloat(rowEdits.qty || item.qty),
         rowEdits.uom || item.uom,
@@ -788,7 +806,7 @@ const exportToExcel = async () => {
     reportData.value.packagingSection.forEach(item => {
       // Format matches the on-screen display - empty packaging cell for Total row
       const rowData = [
-        item.description,
+        item.part === 'Total' ? item.description : (isUSMode.value ? item.description : item.descriptionMx),
         item.part !== 'Total' ? item.part : '', // Empty for Total row
         item.qty
       ];
@@ -1068,7 +1086,8 @@ const getSampleReportData = () => {
               <tr v-for="(item, index) in reportData.lineItems" :key="`${item.skid}-${item.part}`">
                 <td>{{ item.part }}</td>
                 <td class="editable" @click="makeEditable" :data-row-index="index" data-column="clientPart">{{ item.clientPart }}</td>
-                <td class="editable description-cell" @click="makeEditable" :data-row-index="index" data-column="description">{{ getItemDescription(item) }}</td>
+                <td v-if="isUSMode" class="editable description-cell" @click="makeEditable" :data-row-index="index" data-column="description">{{ item.description }}</td>
+                <td v-if="!isUSMode" class="editable description-cell" @click="makeEditable" :data-row-index="index" data-column="descriptionMx">{{ item.descriptionMx }}</td>
                 <td class="editable" @click="makeEditable" :data-row-index="index" data-column="po">{{ item.po }}</td>
                 <td class="editable" @click="makeEditable" :data-row-index="index" data-column="qty">{{ item.qty }}</td>
                 <td>{{ item.uom }}</td>
@@ -1118,7 +1137,9 @@ const getSampleReportData = () => {
               <!-- Packaging rows -->
               <tr v-for="item in reportData.packagingSection" :key="item.part"
                 :class="{ 'total-row': item.part === 'Total' }">
-                <td class="packaging-desc">{{ item.description }}</td>
+                <td class="packaging-desc">
+                  {{ item.part === 'Total' ? item.description : (isUSMode ? item.description : item.descriptionMx) }}
+                </td>
                 <td class="packaging-part">{{ item.part !== 'Total' ? item.part : '' }}</td>
                 <td class="packaging-qty">{{ item.qty }}</td>
               </tr>
