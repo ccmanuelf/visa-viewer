@@ -645,6 +645,66 @@ const makeEditable = (event) => {
   cell.addEventListener('keydown', handleEditKeydown);
 };
 
+// Make a header editable
+const headerLabels = ref({
+  box: 'BOX',
+  skid: 'SKID'
+});
+
+const makeHeaderEditable = (event) => {
+  // Make the header cell editable
+  const cell = event.target;
+  const headerKey = cell.dataset.header;
+  const originalValue = cell.textContent;
+  
+  // Store original value for potential revert
+  cell.dataset.originalValue = originalValue;
+  
+  // Make editable and focus
+  cell.contentEditable = true;
+  cell.focus();
+  
+  // Add event listeners for finish editing
+  cell.addEventListener('blur', finishHeaderEditing);
+  cell.addEventListener('keydown', handleHeaderEditKeydown);
+};
+
+// Finish editing a header cell
+const finishHeaderEditing = (event) => {
+  const cell = event.target;
+  const newValue = cell.textContent;
+  const originalValue = cell.dataset.originalValue;
+  const headerKey = cell.dataset.header;
+  
+  // Store the edited value
+  if (newValue !== originalValue && headerKey) {
+    headerLabels.value[headerKey] = newValue;
+  }
+  
+  // Remove editable state
+  cell.contentEditable = false;
+  
+  // Remove event listeners
+  cell.removeEventListener('blur', finishHeaderEditing);
+  cell.removeEventListener('keydown', handleHeaderEditKeydown);
+};
+
+// Handle keydown events during header editing
+const handleHeaderEditKeydown = (event) => {
+  // Handle Enter key to finish editing
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    event.target.blur();
+  }
+  
+  // Handle Escape key to cancel editing
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    event.target.textContent = event.target.dataset.originalValue;
+    event.target.blur();
+  }
+};
+
 // Finish editing a cell
 const finishEditing = (event) => {
   const cell = event.target;
@@ -702,7 +762,7 @@ const exportToExcel = async () => {
     
     // Create column headers - respect hideOriginColumn setting and US/MX mode
     let columnHeaders = [
-      'PART', 'PART CLIENT', 'DESCRIPTION', 'PO', 'QTY', 'UOM', 'BOX'
+      'PART', 'PART CLIENT', 'DESCRIPTION', 'PO', 'QTY', 'UOM', headerLabels.value.box // Use custom BOX header
     ];
     
     // Conditionally add ORIGIN if not hidden
@@ -713,8 +773,8 @@ const exportToExcel = async () => {
     // Add remaining columns with conditional weight label based on US/MX mode
     columnHeaders = columnHeaders.concat([
       'QTY PER SET', 
-      isUSMode.value ? 'TOTAL WEIGHT (LBS)' : 'TOTAL WEIGHT (KG)', // Weight unit changes based on mode
-      'UNIT COST', 'LABOR', 'TOTAL COST RM', 'TOTAL LABOR COST', 'TOTAL COST', 'SKID'
+      weightUnitLabel.value, // Use computed property for weight unit label
+      'UNIT COST', 'LABOR', 'TOTAL COST RM', 'TOTAL LABOR COST', 'TOTAL COST', headerLabels.value.skid
     ]);
     
     worksheet.addRow(columnHeaders);
@@ -1071,7 +1131,7 @@ const getSampleReportData = () => {
                 <th>PO</th>
                 <th>QTY</th>
                 <th>UOM</th>
-                <th>BOX</th>
+                <th class="editable-header" @click="makeHeaderEditable" data-header="box">BOX</th>
                 <th :class="{ 'hide-mobile': true, 'hide-origin': hideOriginColumn }">ORIGIN</th>
                 <th class="hide-mobile wrap-header">QTY<br>PER SET</th>
                 <th class="wrap-header">TOTAL<br>{{ isUSMode ? 'WEIGHT (LBS)' : 'WEIGHT (KG)' }}</th>
@@ -1080,7 +1140,7 @@ const getSampleReportData = () => {
                 <th class="hide-mobile wrap-header">TOTAL<br>COST RM</th>
                 <th class="hide-mobile wrap-header">TOTAL<br>LABOR COST</th>
                 <th class="wrap-header">TOTAL<br>COST</th>
-                <th>SKID</th>
+                <th class="editable-header" @click="makeHeaderEditable" data-header="skid">SKID</th>
               </tr>
             </thead>
             <tbody>
@@ -1269,9 +1329,15 @@ const getSampleReportData = () => {
   transition: background-color 0.2s;
 }
 
-.editable:hover {
+.editable:hover,
+.editable-header:hover {
   background-color: rgba(65, 184, 255, 0.05);
   cursor: pointer;
+}
+
+.editable-header {
+  border-bottom: 1px dotted #999;
+  transition: background-color 0.2s;
 }
 
 .subtotal-row {
@@ -1508,28 +1574,112 @@ td.hide-origin {
     margin: 0.5cm;
   }
   
-  body {
-    margin: 0;
-    padding: 0;
-    width: 100%;
+  /* Hide everything except the report container */
+  body * {
+    visibility: hidden;
   }
   
-  /* Hide everything except the report container */
-  body > *:not(.report-container) {
-    display: none;
+  .report-container,
+  .report-container * {
+    visibility: visible;
   }
   
   .report-container {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 97%;
+    margin: 0 auto;
+    padding: 0.5cm;
+  }
+  
+  /* Hide specific elements we don't want in the print */
+  .report-controls,
+  .debug-toggle,
+  .debug-section {
+    display: none !important;
+  }
+  
+  /* Table styling for print */
+  .table-wrapper {
     display: block !important;
-    position: relative !important;
     width: 100% !important;
     max-width: 100% !important;
-    margin: 0 !important;
-    padding: 0.5cm !important;
-    box-shadow: none !important;
-    background-color: white !important;
+    margin: 0 auto !important;
     overflow: visible !important;
-    /* No transform to avoid side effects */
+    page-break-inside: avoid !important;
+  }
+  
+  /* Ensure report header is visible and properly formatted */
+  .report-header {
+    page-break-after: avoid !important;
+    margin-bottom: 15px !important;
+  }
+  
+  /* Ensure report metadata and ID are visible in print */
+  .report-metadata,
+  .report-id {
+    display: block !important;
+    visibility: visible !important;
+  }
+  
+  /* Style report metadata for print */
+  .report-metadata {
+    margin: 5px auto 10px !important;
+    width: 90% !important;
+    text-align: right !important;
+    font-size: 9px !important;
+    color: #333 !important;
+  }
+  
+  .report-metadata span,
+  .report-id {
+    margin-left: 15px !important;
+  }
+  
+  /* Fix header table layout */
+  .header-table {
+    width: 90% !important;
+    table-layout: fixed !important;
+    margin: 0 auto 20px !important;
+    font-size: 10px !important;
+    border-collapse: collapse !important;
+  }
+  
+  /* Set consistent column widths for header table */
+  .header-table td {
+    padding: 4px 6px !important;
+    overflow: visible !important;
+    white-space: nowrap !important;
+  }
+  
+  .header-table td.header-label {
+    width: 100px !important;
+    text-align: right !important;
+    font-weight: bold !important;
+    padding-right: 10px !important;
+  }
+  
+  /* Empty spacer column */
+  .header-table td:nth-child(3) {
+    width: 10% !important;
+  }
+  
+  /* Value columns */
+  .header-table td:nth-child(2),
+  .header-table td:nth-child(5) {
+    width: 35% !important;
+  }
+  
+  /* Make packaging section match main table font size */
+  .packaging-section {
+    font-size: 10px !important;
+  }
+  
+  .packaging-table th,
+  .packaging-table td {
+    font-size: 10px !important;
+    padding: 4px 6px !important;
   }
   
   /* Make sure all tables are properly sized */
@@ -1621,15 +1771,21 @@ td.hide-origin {
     padding: 5px;
   }
   
-  /* Ensure good page breaks */
+  /* Ensure good page breaks and clean header display */
   .report-header {
     page-break-after: avoid;
     width: 80% !important;
     min-width: auto !important;
     margin: 0 auto !important;
-    padding-bottom: 10px !important;
+    padding: 0 !important;
+    padding-bottom: 5px !important;
     border-bottom: 1px solid #ccc !important;
     overflow: visible !important;
+  }
+  
+  /* Hide the report metadata in print view */
+  .report-metadata {
+    display: none !important;
   }
   
   .header-table,
