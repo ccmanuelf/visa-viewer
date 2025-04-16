@@ -21,6 +21,7 @@ const showDebug = ref(false); // Controls visibility of debug section
 const printMode = ref(false);
 const generatedTimestamp = ref(new Date().toLocaleString());
 const hideOriginColumn = ref(false); // Controls visibility of ORIGIN column
+const isUSMode = ref(true); // Controls US/MX mode - true for US (default), false for MX
 
 // Build SQL command using the environment variable and replacing the placeholder
 const buildSqlCommand = (declaration) => {
@@ -104,12 +105,64 @@ watch(() => props.declaration, async (newDeclaration) => {
   }
 }, { immediate: true });
 
+// Create computed properties for display that react to isUSMode changes
+const weightUnitLabel = computed(() => {
+  return isUSMode.value ? 'TOTAL WEIGHT (LBS)' : 'TOTAL WEIGHT (KG)';
+});
+
+// Create reactive helper functions for display
+const getDisplayWeight = (weight) => {
+  if (weight === undefined || weight === null) return 0;
+  // Convert LBS to KG when in MX mode, otherwise return original weight (LBS)
+  return isUSMode.value ? weight : weight * 0.453592;
+};
+
+// Helper function for getting descriptions based on mode
+const getItemDescription = (item) => {
+  if (!item) return '';
+  
+  // Since we don't rebuild the entire data structure, just use the item description
+  // In a more complete solution, we'd want to store both US and MX descriptions in each item
+  return item.description || '';
+};
+
+// Safe helper function to handle field access with null checks
+const safeGet = (obj, ...props) => {
+  for (const prop of props) {
+    if (obj && prop in obj) {
+      return obj[prop];
+    }
+  }
+  return '';
+};
+
+// Function to get description based on current mode and available data
+const getDescription = (row) => {
+  if (!row) return '';
+  
+  if (isUSMode.value) {
+    // US mode: Use DESCRIPTION with fallback to DESCRIPTION_CLIENT
+    const desc = safeGet(row, 'DESCRIPTION', 'description');
+    if (desc && desc.trim() !== '') return desc;
+    return safeGet(row, 'DESCRIPTION_CLIENT', 'description_client') || '';
+  } else {
+    // MX mode: Use DESC_CUMPLE_US with fallback to DESCRIPTION
+    const desc = safeGet(row, 'DESC_CUMPLE_US', 'desc_cumple_us');
+    if (desc && desc.trim() !== '') return desc;
+    return safeGet(row, 'DESCRIPTION', 'description') || '';
+  }
+};
+
 // Process the raw data into a structured report
 const processReportData = (rawData) => {
-console.log('Processing raw data:', rawData);
+console.log('Processing raw data');
+
+// Prepare the raw data for processing and storage
+let processableData = [];
+// Ensure we have a usable format for the raw data
+let originalRawData = rawData; // Store original for future reference
 
 // Handle different data formats (JSON object vs array)
-let processableData = [];
 
 // Check if we have a valid data structure from the API
 if (rawData && typeof rawData === 'object') {
@@ -204,10 +257,11 @@ const packagingSection = constructPackagingSummary(processableData, packagingMat
 
 // 6. Return complete report structure
 return {
-header,
-lineItems,
-subtotals,
-packagingSection
+  header,
+  lineItems,
+  subtotals,
+  packagingSection,
+  rawData: processableData // Store processed data for future use
 };
 };
 
@@ -371,36 +425,27 @@ boxNumbers: new Set(),
 weight: parseFloat(row.US_WEIGHT || row.us_weight || 0) // Weight per unit from US_WEIGHT
 };
 
-// PART CLIENT determination based on mapping rules
-// 1. Try MX_PART first 
-if (row.MX_PART || row.mx_part) {
-partSkidGroups[key].clientPart = row.MX_PART || row.mx_part;
-} 
-// 2. Try COMMENTS
-else if (row.COMMENTS || row.comments) {
-partSkidGroups[key].clientPart = row.COMMENTS || row.comments;
+// PART CLIENT determination based on refined business rules
+// 1. First priority: Use PART_CUMPLE if available
+if (row.PART_CUMPLE || row.part_cumple) {
+  partSkidGroups[key].clientPart = row.PART_CUMPLE || row.part_cumple;
 }
-// 3. If both empty, try to derive from PART and COMPANY_PREFIX
-else if (part && typeof part === 'string') {
-const companyPrefix = row.COMPANY_PREFIX || row.company_prefix || '';
-if (companyPrefix && part.startsWith(companyPrefix)) {
-// Trim company prefix from part
-partSkidGroups[key].clientPart = part.substring(companyPrefix.length);
-} else if (part.startsWith('KWS')) {
-partSkidGroups[key].clientPart = part.replace('KWS', 'S');
-} else if (part.startsWith('KW')) {
-partSkidGroups[key].clientPart = 'S' + part.substring(2);
-}
+// 2. Second priority: Use MX_PART and trim prefix according to COMPANY_PREFIX
+else if (row.MX_PART || row.mx_part) {
+  const mxPart = row.MX_PART || row.mx_part;
+  const companyPrefix = row.COMPANY_PREFIX || row.company_prefix || '';
+  
+  if (companyPrefix && typeof mxPart === 'string' && mxPart.startsWith(companyPrefix)) {
+    // Trim company prefix from MX_PART
+    partSkidGroups[key].clientPart = mxPart.substring(companyPrefix.length);
+  } else {
+    // Use MX_PART as is if no prefix match
+    partSkidGroups[key].clientPart = mxPart;
+  }
 }
 
-// DESCRIPTION determination based on mapping rules
-if (row.DESC_CUMPLE_US || row.desc_cumple_us) {
-// Option MX_DATA: Use DESC_CUMPLE_US if available
-partSkidGroups[key].description = row.DESC_CUMPLE_US || row.desc_cumple_us;
-} else if (row.DESCRIPTION || row.description) {
-// Option US_DATA: Use DESCRIPTION
-partSkidGroups[key].description = row.DESCRIPTION || row.description;
-}
+// Use getDescription helper function for description determination
+partSkidGroups[key].description = getDescription(row);
 }
 
 // Accumulate quantity - QTY from QTY1
@@ -427,6 +472,8 @@ qtyPerSet: group.qtyPerSet,
 weight: group.weight * group.qty, // Total weight = weight per unit * quantity
 unitCost: group.unitCost,
 labor: group.labor,
+totalCostRm: group.unitCost * group.qty, // New column: TOTAL COST RM = UNIT COST × QTY
+totalLaborCost: group.labor * group.qty, // New column: TOTAL LABOR COST = LABOR × QTY
 totalCost: (group.unitCost + group.labor) * group.qty, // Total cost
 skid: group.skid
 })).sort((a, b) => {
@@ -447,7 +494,9 @@ return {
 quantity: 0,
 boxes: 0,
 weight: 0,
-cost: 0,
+totalCostRm: 0,
+totalLaborCost: 0,
+totalCost: 0,
 skids: 0
 };
 }
@@ -456,14 +505,18 @@ const totals = lineItems.reduce((acc, item) => {
 acc.quantity += item.qty || 0;
 acc.boxes += item.boxCount || 0;
 acc.weight += item.weight || 0;
-acc.cost += item.totalCost || 0;
+acc.totalCostRm += item.totalCostRm || 0;
+acc.totalLaborCost += item.totalLaborCost || 0;
+acc.totalCost += item.totalCost || 0;
 acc.skids.add(item.skid);
 return acc;
 }, {
 quantity: 0,
 boxes: 0,
 weight: 0,
-cost: 0,
+totalCostRm: 0,
+totalLaborCost: 0,
+totalCost: 0,
 skids: new Set()
 });
 
@@ -471,7 +524,9 @@ return {
 quantity: totals.quantity,
 boxes: totals.boxes,
 weight: parseFloat(totals.weight.toFixed(1)),
-totalCost: parseFloat(totals.cost.toFixed(2)),
+totalCostRm: parseFloat(totals.totalCostRm.toFixed(2)),
+totalLaborCost: parseFloat(totals.totalLaborCost.toFixed(2)),
+totalCost: parseFloat(totals.totalCost.toFixed(2)),
 skids: totals.skids.size
 };
 };
@@ -511,12 +566,20 @@ packagingData.forEach(row => {
 const part = row.PART || row.part;
 
 if (!packagingGroups[part]) {
-packagingGroups[part] = {
-part,
-description: row.DESCRIPTION || row.DESC_CUMPLE_US || row.description || derivePackagingDescription(part),
-qty: 0,
-boxCount: 0
-};
+  // Get description based on current mode
+  let description = getDescription(row);
+  
+  // If no description found, use derived description as a fallback
+  if (!description) {
+    description = derivePackagingDescription(part);
+  }
+  
+  packagingGroups[part] = {
+    part,
+    description: description,
+    qty: 0,
+    boxCount: 0
+  };
 }
 
 // Accumulate quantity - handle case-insensitive property names
@@ -619,11 +682,23 @@ const exportToExcel = async () => {
     worksheet.addRow(['To', reportData.value.header.to, '', '', '']);
     worksheet.addRow(['', '', '', '', '']); // Empty row for spacing
     
-    // Create column headers
-    const columnHeaders = [
-      'PART', 'PART CLIENT', 'DESCRIPTION', 'PO', 'QTY', 'UOM', 'BOX',
-      'ORIGIN', 'QTY PER SET', 'TOTAL WEIGHT (LBS)', 'UNIT COST', 'LABOR', 'TOTAL COST', 'SKID'
+    // Create column headers - respect hideOriginColumn setting and US/MX mode
+    let columnHeaders = [
+      'PART', 'PART CLIENT', 'DESCRIPTION', 'PO', 'QTY', 'UOM', 'BOX'
     ];
+    
+    // Conditionally add ORIGIN if not hidden
+    if (!hideOriginColumn.value) {
+      columnHeaders.push('ORIGIN');
+    }
+    
+    // Add remaining columns with conditional weight label based on US/MX mode
+    columnHeaders = columnHeaders.concat([
+      'QTY PER SET', 
+      isUSMode.value ? 'TOTAL WEIGHT (LBS)' : 'TOTAL WEIGHT (KG)', // Weight unit changes based on mode
+      'UNIT COST', 'LABOR', 'TOTAL COST RM', 'TOTAL LABOR COST', 'TOTAL COST', 'SKID'
+    ]);
+    
     worksheet.addRow(columnHeaders);
     
     // Style the header row
@@ -634,62 +709,107 @@ const exportToExcel = async () => {
     reportData.value.lineItems.forEach((item, index) => {
       const rowEdits = editedCells.value[index] || {};
       
-      worksheet.addRow([
+      let rowData = [
         rowEdits.part || item.part,
         rowEdits.clientPart || item.clientPart,
         rowEdits.description || item.description,
         rowEdits.po || item.po,
         parseFloat(rowEdits.qty || item.qty),
         rowEdits.uom || item.uom,
-        parseInt(rowEdits.boxCount || item.boxCount),
-        rowEdits.origin || item.origin,
+        parseInt(rowEdits.boxCount || item.boxCount)
+      ];
+      
+      // Conditionally add ORIGIN if not hidden
+      if (!hideOriginColumn.value) {
+        rowData.push(rowEdits.origin || item.origin);
+      }
+      
+      // Add remaining columns
+      rowData = rowData.concat([
         parseFloat(rowEdits.qtyPerSet || item.qtyPerSet),
-        parseFloat(rowEdits.weight || item.weight),
+        getDisplayWeight(parseFloat(rowEdits.weight || item.weight)),
         parseFloat(rowEdits.unitCost || item.unitCost),
         parseFloat(rowEdits.labor || item.labor),
+        parseFloat(rowEdits.totalCostRm || item.totalCostRm),
+        parseFloat(rowEdits.totalLaborCost || item.totalLaborCost),
         parseFloat(rowEdits.totalCost || item.totalCost),
         rowEdits.skid || item.skid
       ]);
+      
+      worksheet.addRow(rowData);
     });
     
-    // Add subtotal row
+    // Add subtotal row - respect hideOriginColumn setting
     const currentRow = worksheet.rowCount + 1;
-    worksheet.addRow([
+    let subtotalRow = [
       '', '', '', 'Total',
       reportData.value.subtotals.quantity,
       '',
-      reportData.value.subtotals.boxes,
+      reportData.value.subtotals.boxes
+    ];
+    
+    // Conditionally add empty cell for ORIGIN if not hidden
+    if (!hideOriginColumn.value) {
+      subtotalRow.push('');
+    }
+    
+    // Add remaining subtotal cells
+    subtotalRow = subtotalRow.concat([
+      '',
+      getDisplayWeight(reportData.value.subtotals.weight),
       '',
       '',
-      reportData.value.subtotals.weight,
-      '',
-      '',
+      reportData.value.subtotals.totalCostRm,
+      reportData.value.subtotals.totalLaborCost,
       reportData.value.subtotals.totalCost,
       reportData.value.subtotals.skids
     ]);
     
+    worksheet.addRow(subtotalRow);
+    
     // Style the subtotal row
-    const subtotalRow = worksheet.getRow(currentRow);
-    subtotalRow.font = { bold: true };
+    const subtotalRowEl = worksheet.getRow(currentRow);
+    subtotalRowEl.font = { bold: true };
     
     // Add empty row for spacing
     worksheet.addRow(['', '', '', '', '']);
     
     // Add packaging section header
-    worksheet.addRow(['', '', '', '', '', 'Box\'s', 'Quantity']);
+    worksheet.addRow([]);
+    worksheet.addRow(['Packaging Materials']);
+    worksheet.getRow(worksheet.rowCount).font = { bold: true, size: 14 };
+    
+    // Add packaging table headers to match on-screen display
+    worksheet.addRow(['Description', 'Packaging', 'Quantity']);
     const packagingHeaderRow = worksheet.getRow(worksheet.rowCount);
     packagingHeaderRow.font = { bold: true };
     
     // Add packaging rows
     reportData.value.packagingSection.forEach(item => {
-      worksheet.addRow(['', '', '', '', '', item.boxCount, item.qty]);
+      // Format matches the on-screen display - empty packaging cell for Total row
+      const rowData = [
+        item.description,
+        item.part !== 'Total' ? item.part : '', // Empty for Total row
+        item.qty
+      ];
+      
+      const row = worksheet.addRow(rowData);
+      
+      // Apply bold styling to the Total row
+      if (item.part === 'Total') {
+        row.font = { bold: true };
+      }
     });
     
-    // Format number columns
-    worksheet.getColumn(10).numFmt = '0.00'; // TOTAL WEIGHT
-    worksheet.getColumn(11).numFmt = '0.00'; // UNIT COST
-    worksheet.getColumn(12).numFmt = '0.00'; // LABOR
-    worksheet.getColumn(13).numFmt = '0.00'; // TOTAL COST
+    // Format number columns - adjust column indices based on whether ORIGIN is hidden
+    const originOffset = hideOriginColumn.value ? 0 : 1;
+    
+    worksheet.getColumn(9 + originOffset).numFmt = '0.00'; // TOTAL WEIGHT
+    worksheet.getColumn(10 + originOffset).numFmt = '0.00'; // UNIT COST
+    worksheet.getColumn(11 + originOffset).numFmt = '0.00'; // LABOR
+    worksheet.getColumn(12 + originOffset).numFmt = '0.00'; // TOTAL COST RM
+    worksheet.getColumn(13 + originOffset).numFmt = '0.00'; // TOTAL LABOR COST
+    worksheet.getColumn(14 + originOffset).numFmt = '0.00'; // TOTAL COST
     
     // Auto-size columns
     worksheet.columns.forEach(column => {
@@ -729,6 +849,13 @@ const toggleSampleData = () => {
     // Fetch real data
     fetchReportData(props.declaration.id);
   }
+};
+
+// Function to trigger UI refresh when needed
+const forceRefresh = () => {
+  console.log('Force refreshing display with mode:', isUSMode.value ? 'US' : 'MX');
+  // Just log the change - reactivity now handled through computed properties
+  // This ensures both checkboxes can work independently
 };
 
 // Function to handle report printing
@@ -858,6 +985,10 @@ const getSampleReportData = () => {
               <input type="checkbox" v-model="hideOriginColumn">
               <span>Hide Origin Column</span>
             </label>
+            <label class="checkbox-control">
+              <input type="checkbox" v-model="isUSMode">
+              <span>{{ isUSMode ? 'US' : 'MX' }}</span>
+            </label>
           </div>
         </div>
       </div>
@@ -924,9 +1055,11 @@ const getSampleReportData = () => {
                 <th>BOX</th>
                 <th :class="{ 'hide-mobile': true, 'hide-origin': hideOriginColumn }">ORIGIN</th>
                 <th class="hide-mobile">QTY PER SET</th>
-                <th>TOTAL WEIGHT (LBS)</th>
+                <th>{{ weightUnitLabel }}</th>
                 <th class="hide-mobile">UNIT COST</th>
                 <th class="hide-mobile">LABOR</th>
+                <th class="hide-mobile">TOTAL COST RM</th>
+                <th class="hide-mobile">TOTAL LABOR COST</th>
                 <th>TOTAL COST</th>
                 <th>SKID</th>
               </tr>
@@ -935,16 +1068,18 @@ const getSampleReportData = () => {
               <tr v-for="(item, index) in reportData.lineItems" :key="`${item.skid}-${item.part}`">
                 <td>{{ item.part }}</td>
                 <td class="editable" @click="makeEditable" :data-row-index="index" data-column="clientPart">{{ item.clientPart }}</td>
-                <td class="editable description-cell" @click="makeEditable" :data-row-index="index" data-column="description">{{ item.description }}</td>
+                <td class="editable description-cell" @click="makeEditable" :data-row-index="index" data-column="description">{{ getItemDescription(item) }}</td>
                 <td class="editable" @click="makeEditable" :data-row-index="index" data-column="po">{{ item.po }}</td>
                 <td class="editable" @click="makeEditable" :data-row-index="index" data-column="qty">{{ item.qty }}</td>
                 <td>{{ item.uom }}</td>
                 <td class="editable" @click="makeEditable" :data-row-index="index" data-column="boxCount">{{ item.boxCount }}</td>
                 <td class="editable hide-mobile" :class="{ 'hide-origin': hideOriginColumn }" @click="makeEditable" :data-row-index="index" data-column="origin">{{ item.origin }}</td>
                 <td class="editable hide-mobile" @click="makeEditable" :data-row-index="index" data-column="qtyPerSet">{{ item.qtyPerSet }}</td>
-                <td class="editable" @click="makeEditable" :data-row-index="index" data-column="weight">{{ item.weight.toFixed(2) }}</td>
+                <td class="editable" @click="makeEditable" :data-row-index="index" data-column="weight">{{ getDisplayWeight(item.weight).toFixed(2) }}</td>
                 <td class="editable hide-mobile" @click="makeEditable" :data-row-index="index" data-column="unitCost">{{ item.unitCost.toFixed(2) }}</td>
                 <td class="editable hide-mobile" @click="makeEditable" :data-row-index="index" data-column="labor">{{ item.labor.toFixed(2) }}</td>
+                <td class="hide-mobile">{{ item.totalCostRm.toFixed(2) }}</td>
+                <td class="hide-mobile">{{ item.totalLaborCost.toFixed(2) }}</td>
                 <td>{{ item.totalCost.toFixed(2) }}</td>
                 <td>{{ item.skid }}</td>
               </tr>
@@ -956,9 +1091,11 @@ const getSampleReportData = () => {
                 <td class="subtotal-value">{{ reportData.subtotals.boxes }}</td>
                 <td class="hide-mobile subtotal-spacer" :class="{ 'hide-origin': hideOriginColumn }"></td>
                 <td class="hide-mobile subtotal-spacer"></td>
-                <td class="subtotal-value">{{ reportData.subtotals.weight.toFixed(2) }}</td>
+                <td class="subtotal-value">{{ getDisplayWeight(reportData.subtotals.weight).toFixed(2) }}</td>
                 <td class="hide-mobile subtotal-spacer"></td>
                 <td class="hide-mobile subtotal-spacer"></td>
+                <td class="hide-mobile subtotal-value">{{ reportData.subtotals.totalCostRm.toFixed(2) }}</td>
+                <td class="hide-mobile subtotal-value">{{ reportData.subtotals.totalLaborCost.toFixed(2) }}</td>
                 <td class="subtotal-value">{{ reportData.subtotals.totalCost.toFixed(2) }}</td>
                 <td class="subtotal-value">{{ reportData.subtotals.skids }}</td>
               </tr>
@@ -1164,6 +1301,11 @@ const getSampleReportData = () => {
   display: none !important;
 }
 
+th.hide-origin,
+td.hide-origin {
+  display: none !important;
+}
+
 /* Buttons styling */
 .buttons {
   display: flex;
@@ -1182,6 +1324,20 @@ const getSampleReportData = () => {
 
 .toggle-button:hover {
   background-color: #5a6268;
+}
+
+.refresh-button {
+  background-color: #28a745;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 8px 16px;
+  cursor: pointer;
+  transition: background-color 0.3s;
+}
+
+.refresh-button:hover {
+  background-color: #218838;
 }
 
 .export-button {

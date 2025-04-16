@@ -82,7 +82,7 @@ const constructSummaryBody = (rawData, packagingMaterials) => {
       partSkidGroups[key] = {
         skid: skids,                                       // SKID  
         part: part,                                        // PART
-        clientPart: row.MX_PART || row.mx_part || '',     // PART CLIENT (mapped to S* in example)
+        clientPart: '',                                   // PART CLIENT (will be set below)
         description: row.DESCRIPTION || row.description || '',  // DESCRIPTION
         po: row.LOT_NUM || row.LOT || row.lot_num || row.lot || '',  // PO (mapped to K019228 in example)
         qty: 0,                                           // QTY (accumulated value)
@@ -99,12 +99,22 @@ const constructSummaryBody = (rawData, packagingMaterials) => {
                         row.mx_weight || row.weight_unit || 0) // Weight per unit
       };
       
-      // Try to derive client part number if not directly available
-      if (!partSkidGroups[key].clientPart && part && typeof part === 'string') {
-        if (part.startsWith('KWS')) {
-          partSkidGroups[key].clientPart = part.replace('KWS', 'S');
-        } else if (part.startsWith('KW')) {
-          partSkidGroups[key].clientPart = 'S' + part.substring(2);
+      // PART CLIENT determination based on refined business rules
+      // 1. First priority: Use PART_CUMPLE if available
+      if (row.PART_CUMPLE || row.part_cumple) {
+        partSkidGroups[key].clientPart = row.PART_CUMPLE || row.part_cumple;
+      }
+      // 2. Second priority: Use MX_PART and trim prefix according to COMPANY_PREFIX
+      else if (row.MX_PART || row.mx_part) {
+        const mxPart = row.MX_PART || row.mx_part;
+        const companyPrefix = row.COMPANY_PREFIX || row.company_prefix || '';
+        
+        if (companyPrefix && typeof mxPart === 'string' && mxPart.startsWith(companyPrefix)) {
+          // Trim company prefix from MX_PART
+          partSkidGroups[key].clientPart = mxPart.substring(companyPrefix.length);
+        } else {
+          // Use MX_PART as is if no prefix match
+          partSkidGroups[key].clientPart = mxPart;
         }
       }
     }
