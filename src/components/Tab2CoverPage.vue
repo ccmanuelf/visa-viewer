@@ -157,6 +157,24 @@ const getDescription = (row) => {
 const processReportData = (rawData) => {
 console.log('Processing raw data');
 
+// Store the original API response for direct access to all 175 columns
+const originalApiResponse = rawData;
+
+// Log the original structure if debug is enabled
+if (showDebug.value) {
+  console.log('Original API response structure:', originalApiResponse);
+  if (originalApiResponse && originalApiResponse.columns) {
+    console.log('Columns in original API response:', originalApiResponse.columns.length);
+    // Log the definition of the COMMENTS column if found
+    const commentsColumn = originalApiResponse.columns.find(col => 
+      col && col.columnName === 'COMMENTS' && col.tableName === 'QTY'
+    );
+    if (commentsColumn) {
+      console.log('Found COMMENTS column definition:', commentsColumn);
+    }
+  }
+}
+
 // Prepare the raw data for processing and storage
 let processableData = [];
 // Ensure we have a usable format for the raw data
@@ -247,7 +265,7 @@ const packagingMaterials = identifyPackagingMaterials(processableData);
 const header = constructHeader(processableData);
 
 // 3. Build the summary body
-const lineItems = constructSummaryBody(processableData, packagingMaterials);
+const lineItems = constructSummaryBody(processableData, packagingMaterials, rawData, originalApiResponse);
 
 // 4. Calculate subtotals
 const subtotals = calculateSubtotals(lineItems);
@@ -261,7 +279,9 @@ return {
   lineItems,
   subtotals,
   packagingSection,
-  rawData: processableData // Store processed data for future use
+  rawData: processableData, // Store processed data for future use
+  originalRawData: rawData,   // Store original unprocessed data to preserve all 175 columns
+  originalApiResponse: originalApiResponse // Store the complete API response with all 175 columns intact
 };
 };
 
@@ -387,8 +407,130 @@ shipmentNumber
 };
 };
 
+// Helper function to extract comments directly from the original API response
+const extractCommentsFromOriginalData = (row, originalData, apiResponse) => {
+  let commentsValue = '';
+  
+  // Debug logging if enabled
+  if (showDebug.value) {
+    console.log('DEBUG: Extracting COMMENTS from row using originalData and apiResponse');
+  }
+  
+  try {
+    // Get the row index - we need this to access the corresponding row in the API response
+    const skids = row.SKIDS || row.skids;
+    const part = row.PART || row.part;
+    const rowIndex = row._index; // Some APIs include the original index
+    
+    // APPROACH 1: Direct access to API response if we have it and can find the COMMENTS column
+    if (apiResponse && apiResponse.columns && Array.isArray(apiResponse.columns)) {
+      // Find the index of the COMMENTS column in the API response
+      const commentsColIndex = apiResponse.columns.findIndex(col => 
+        col && col.columnName === 'COMMENTS' && 
+        (col.tableName === 'QTY' || !col.tableName)
+      );
+      
+      if (showDebug.value) {
+        console.log('DEBUG: Found COMMENTS column at index:', commentsColIndex);
+      }
+      
+      // If we found the column and have valid row data in the API response
+      if (commentsColIndex !== -1 && apiResponse.rows && Array.isArray(apiResponse.rows)) {
+        // Try to find the matching row in the API response
+        // First attempt: Use the row index if available
+        if (rowIndex !== undefined && apiResponse.rows[rowIndex]) {
+          const apiRow = apiResponse.rows[rowIndex];
+          if (apiRow.values && apiRow.values[commentsColIndex]) {
+            commentsValue = apiRow.values[commentsColIndex].value || '';
+            if (showDebug.value) {
+              console.log('DEBUG: Found COMMENTS via direct API access at row index:', rowIndex, 'value:', commentsValue);
+            }
+            return commentsValue;
+          }
+        }
+        
+        // Second attempt: Try to match by SKID and PART across all rows
+        if (skids && part) {
+          // Find matching SKID and PART columns
+          const skidColIndex = apiResponse.columns.findIndex(col => 
+            col && (col.columnName === 'SKIDS' || col.columnName === 'SKID')
+          );
+          
+          const partColIndex = apiResponse.columns.findIndex(col => 
+            col && col.columnName === 'PART'
+          );
+          
+          if (skidColIndex !== -1 && partColIndex !== -1) {
+            // Search for matching row
+            for (let i = 0; i < apiResponse.rows.length; i++) {
+              const apiRow = apiResponse.rows[i];
+              if (!apiRow.values) continue;
+              
+              const rowSkid = apiRow.values[skidColIndex]?.value;
+              const rowPart = apiRow.values[partColIndex]?.value;
+              
+              if (rowSkid == skids && rowPart == part) {
+                if (apiRow.values[commentsColIndex]) {
+                  commentsValue = apiRow.values[commentsColIndex].value || '';
+                  if (showDebug.value) {
+                    console.log('DEBUG: Found COMMENTS via SKID/PART match, row:', i, 'value:', commentsValue);
+                  }
+                  return commentsValue;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    // APPROACH 2: Direct column access in the current row.values array (if it exists)
+    if (row.values && Array.isArray(row.values)) {
+      // Try index 48 specifically (column 49)
+      if (row.values[48] && row.values[48].value !== undefined) {
+        commentsValue = row.values[48].value;
+        if (showDebug.value) {
+          console.log('DEBUG: Found COMMENTS at fixed index 48 (column 49):', commentsValue);
+        }
+        return commentsValue;
+      }
+      
+      // Fallback: Try nearby indices
+      for (let i = 47; i <= 50; i++) {
+        if (row.values[i] && row.values[i].value !== undefined) {
+          commentsValue = row.values[i].value;
+          if (showDebug.value) {
+            console.log('DEBUG: Found potential COMMENTS at index', i, ':', commentsValue);
+          }
+          // Only use this if we found actual content
+          if (commentsValue && typeof commentsValue === 'string' && commentsValue.trim() !== '') {
+            return commentsValue;
+          }
+        }
+      }
+    }
+    
+    // APPROACH 3: Direct property access as last resort
+    if (row.COMMENTS !== undefined) {
+      commentsValue = row.COMMENTS;
+      if (showDebug.value) console.log('DEBUG: Found COMMENTS via property access:', commentsValue);
+      return commentsValue;
+    }
+    
+    if (row.comments !== undefined) {
+      commentsValue = row.comments;
+      if (showDebug.value) console.log('DEBUG: Found comments (lowercase) via property access:', commentsValue);
+      return commentsValue;
+    }
+  } catch (error) {
+    console.error('Error extracting COMMENTS:', error);
+  }
+  
+  return commentsValue;
+};
+
 // Build the summary body with line items according to mapping rules
-const constructSummaryBody = (rawData, packagingMaterials) => {
+const constructSummaryBody = (rawData, packagingMaterials, originalData, apiResponse) => {
 // Filter out packaging materials - handle case-insensitive property names
 const productData = rawData.filter(row => {
 const part = row.PART || row.part;
@@ -404,6 +546,14 @@ const skids = row.SKIDS || row.skids;
 const part = row.PART || row.part;
 
 if (skids === null || skids === undefined || !part) return;
+
+// Get comments directly from column 49
+const commentsValue = extractCommentsFromOriginalData(row, originalData, apiResponse);
+
+// Debug logging if needed
+if (showDebug.value && !partSkidGroups[key] && commentsValue) {
+  console.log('DEBUG: Extracted comments value from column 49:', commentsValue);
+}
 
 const key = `${skids}|${part}`;
 
@@ -423,7 +573,8 @@ qtyPerSet: parseFloat(row.QTY2 || row.qty2 || 0), // QTY PER SET from QTY2
 unitCost: parseFloat(row.COST || row.cost || 0), // UNIT COST from COST
 labor: parseFloat(row.LABOR || row.labor || 0), // LABOR from LABOR
 boxNumbers: new Set(),
-weight: parseFloat(row.US_WEIGHT || row.us_weight || 0) // Weight per unit from US_WEIGHT
+weight: parseFloat(row.US_WEIGHT || row.us_weight || 0), // Weight per unit from US_WEIGHT
+comments: commentsValue // Using directly accessed column 49 value directly
 };
 
 // PART CLIENT determination based on refined business rules
@@ -484,6 +635,7 @@ totalCostRm: group.unitCost * group.qty, // New column: TOTAL COST RM = UNIT COS
 totalLaborCost: group.labor * group.qty, // New column: TOTAL LABOR COST = LABOR × QTY
 totalCost: (group.unitCost + group.labor) * group.qty, // Total cost
 skid: group.skid,
+comments: group.comments, // Comments from column 49
 showSkid: true,    // Default to showing the SKID value (will be updated for merged cells)
 mergeSkidRows: 1   // Default to 1 row (will be updated for merged cells)
 })).sort((a, b) => {
@@ -811,7 +963,7 @@ const exportToExcel = async () => {
     columnHeaders = columnHeaders.concat([
       'QTY PER SET', 
       weightUnitLabel.value, // Use computed property for weight unit label
-      'UNIT COST', 'LABOR', 'TOTAL COST RM', 'TOTAL LABOR COST', 'TOTAL COST', headerLabels.value.skid
+      'UNIT COST', 'LABOR', 'TOTAL COST RM', 'TOTAL LABOR COST', 'TOTAL COST', headerLabels.value.skid, 'COMMENTS'
     ]);
     
     worksheet.addRow(columnHeaders);
@@ -873,7 +1025,8 @@ const exportToExcel = async () => {
         parseFloat(rowEdits.totalCostRm || item.totalCostRm),
         parseFloat(rowEdits.totalLaborCost || item.totalLaborCost),
         parseFloat(rowEdits.totalCost || item.totalCost),
-        rowEdits.skid || item.skid
+        rowEdits.skid || item.skid,
+        rowEdits.comments || item.comments || ''
       ]);
       
       worksheet.addRow(rowData);
@@ -1211,7 +1364,7 @@ const getSampleReportData = () => {
         </table>
         
         <!-- Main report table -->
-        <div class="table-wrapper">
+        <div class="table-wrapper scrollable-table">
           <table class="report-table">
             <thead>
               <tr>
@@ -1231,6 +1384,7 @@ const getSampleReportData = () => {
                 <th class="hide-mobile wrap-header">TOTAL<br>LABOR COST</th>
                 <th class="wrap-header">TOTAL<br>COST</th>
                 <th class="editable-header" @click="makeHeaderEditable" data-header="skid">SKID</th>
+                <th>COMMENTS</th>
               </tr>
             </thead>
             <tbody>
@@ -1252,6 +1406,7 @@ const getSampleReportData = () => {
                 <td class="hide-mobile currency">${{ item.totalLaborCost.toFixed(4) }}</td>
                 <td class="currency">${{ item.totalCost.toFixed(4) }}</td>
                 <td v-if="item.showSkid" :rowspan="item.mergeSkidRows" class="skid-cell">{{ item.skid }}</td>
+                <td class="comments-cell">{{ item.comments }}</td>
               </tr>
               <tr class="subtotal-row">
                 <td colspan="3" class="subtotal-spacer"></td>
@@ -1268,6 +1423,7 @@ const getSampleReportData = () => {
                 <td class="hide-mobile subtotal-value currency">${{ reportData.subtotals.totalLaborCost.toFixed(4) }}</td>
                 <td class="subtotal-value currency">${{ reportData.subtotals.totalCost.toFixed(4) }}</td>
                 <td class="subtotal-value">{{ reportData.subtotals.skids }}</td>
+                <td class="subtotal-spacer"></td>
               </tr>
             </tbody>
           </table>
@@ -1351,6 +1507,35 @@ const getSampleReportData = () => {
   margin-bottom: 20px;
 }
 
+/* Scrollable table container */
+.scrollable-table {
+  max-height: 80vh; /* 80% of viewport height as requested */
+  overflow-y: auto;
+  overflow-x: auto;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  /* Add some styling for scrollbars on non-webkit browsers */
+  scrollbar-width: thin;
+  scrollbar-color: #6c757d #f8f9fa;
+}
+
+/* Custom scrollbar styling for WebKit browsers */
+.scrollable-table::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.scrollable-table::-webkit-scrollbar-track {
+  background: #f8f9fa;
+  border-radius: 4px;
+}
+
+.scrollable-table::-webkit-scrollbar-thumb {
+  background-color: #6c757d;
+  border-radius: 4px;
+  border: 2px solid #f8f9fa;
+}
+
 /* Header table specific styling */
 .header-table {
   margin-bottom: 30px;
@@ -1383,6 +1568,8 @@ const getSampleReportData = () => {
   white-space: nowrap;
   font-weight: 600;
   color: #2c3e50;
+  /* Add box-shadow for better visual separation when scrolling */
+  box-shadow: 0 2px 2px -1px rgba(0, 0, 0, 0.1);
 }
 
 .report-table th.wrap-header {
@@ -1658,6 +1845,18 @@ td.hide-origin {
 
 /* Print-specific styling */
 @media print {
+  /* Reset scrollable table and sticky headers for print */
+  .scrollable-table {
+    max-height: none !important;
+    overflow: visible !important;
+    border: none !important;
+  }
+  
+  .report-table th {
+    position: static !important;
+    box-shadow: none !important;
+  }
+  
   /* Set landscape orientation */
   @page {
     size: landscape;
@@ -1923,5 +2122,14 @@ td.hide-origin {
   text-align: center;
   background-color: rgba(240, 247, 255, 0.2);
   border: 1px solid #dee2e6;
+}
+
+/* Comments cell styling */
+.comments-cell {
+  max-width: 200px;
+  white-space: normal;
+  word-wrap: break-word;
+  font-size: 0.9em;
+  color: #555;
 }
 </style>
