@@ -979,8 +979,9 @@ const exportToExcel = async () => {
     let lastSkidRow = 0;
     let currentRow = startDataRow;
     
-    // Calculate which column contains the SKID value (accounting for hidden ORIGIN)
-    const skidColumnIndex = columnHeaders.length; // It's the last column
+    // Calculate which column contains the SKID value (COMMENTS is the last column now)
+    // SKID is the second-to-last column
+    const skidColumnIndex = columnHeaders.length - 1; // SKID column index (second-to-last column)
     
     // Add data rows
     reportData.value.lineItems.forEach((item, index) => {
@@ -1029,7 +1030,22 @@ const exportToExcel = async () => {
         rowEdits.comments || item.comments || ''
       ]);
       
-      worksheet.addRow(rowData);
+      const excelRow = worksheet.addRow(rowData);
+      
+      // Add borders only to cells with data
+      excelRow.eachCell((cell, colNumber) => {
+        // Check if the cell has data
+        if (cell.value !== null && cell.value !== undefined && cell.value !== '') {
+          // Add thin borders to cells with data
+          cell.border = {
+            top: { style: 'thin' },
+            left: { style: 'thin' },
+            bottom: { style: 'thin' },
+            right: { style: 'thin' }
+          };
+        }
+      });
+      
       currentRow++;
     });
     
@@ -1505,6 +1521,7 @@ const getSampleReportData = () => {
   min-width: 1200px; /* Ensure minimum width for content */
   font-family: 'Noto Sans', -apple-system, BlinkMacSystemFont, sans-serif;
   margin-bottom: 20px;
+  font-size: 12px; /* Further reduced font size for screen */
 }
 
 /* Scrollable table container */
@@ -1809,6 +1826,7 @@ td.hide-origin {
   width: 100%;
   border-collapse: collapse;
   margin: 0 auto;
+  font-size: 12px; /* Match main table font size */
 }
 
 .packaging-table th {
@@ -1967,7 +1985,7 @@ td.hide-origin {
   
   .packaging-table th,
   .packaging-table td {
-    font-size: 10px !important;
+    font-size: 8px !important;
     padding: 4px 6px !important;
   }
   
@@ -2044,7 +2062,7 @@ td.hide-origin {
   /* Adjust table for better fit in landscape */
   .report-table {
     page-break-inside: avoid;
-    font-size: 11px;
+    font-size: 8px !important; /* Further reduced font size for print */
     width: 100%;
     min-width: auto !important; /* Override fixed min-width */
   }
