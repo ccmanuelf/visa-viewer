@@ -427,9 +427,10 @@ weight: parseFloat(row.US_WEIGHT || row.us_weight || 0) // Weight per unit from 
 };
 
 // PART CLIENT determination based on refined business rules
-// 1. First priority: Use PART_CUMPLE if available
-if (row.PART_CUMPLE || row.part_cumple) {
-  partSkidGroups[key].clientPart = row.PART_CUMPLE || row.part_cumple;
+// 1. First priority: Use PART_CUMPLE only if it's available and has at least 4 characters
+const partCumple = row.PART_CUMPLE || row.part_cumple;
+if (partCumple && typeof partCumple === 'string' && partCumple.length >= 4) {
+  partSkidGroups[key].clientPart = partCumple;
 }
 // 2. Second priority: Use MX_PART and trim prefix according to COMPANY_PREFIX
 else if (row.MX_PART || row.mx_part) {
@@ -465,7 +466,7 @@ partSkidGroups[key].boxNumbers.add(ctns);
 });
 
 // Transform groups into line items
-return Object.values(partSkidGroups).map(group => ({
+const lineItems = Object.values(partSkidGroups).map(group => ({
 part: group.part,
 clientPart: group.clientPart,
 description: group.description,       // US description
@@ -482,7 +483,9 @@ labor: group.labor,
 totalCostRm: group.unitCost * group.qty, // New column: TOTAL COST RM = UNIT COST × QTY
 totalLaborCost: group.labor * group.qty, // New column: TOTAL LABOR COST = LABOR × QTY
 totalCost: (group.unitCost + group.labor) * group.qty, // Total cost
-skid: group.skid
+skid: group.skid,
+showSkid: true,    // Default to showing the SKID value (will be updated for merged cells)
+mergeSkidRows: 1   // Default to 1 row (will be updated for merged cells)
 })).sort((a, b) => {
 // Sort by SKID first, then by PART
 const skidA = parseInt(a.skid) || 0;
@@ -491,6 +494,40 @@ const skidB = parseInt(b.skid) || 0;
 if (skidA !== skidB) return skidA - skidB;
 return a.part.localeCompare(b.part);
 });
+
+// Process the sorted items to determine which SKID cells to merge
+let currentSkid = null;
+let mergeStartIndex = 0;
+
+lineItems.forEach((item, index) => {
+  if (currentSkid !== item.skid) {
+    // If we have a new SKID value, update the merge count for the previous group
+    if (index > 0 && mergeStartIndex < index - 1) {
+      lineItems[mergeStartIndex].mergeSkidRows = index - mergeStartIndex;
+      
+      // Hide SKID values for all but the first row in the group
+      for (let i = mergeStartIndex + 1; i < index; i++) {
+        lineItems[i].showSkid = false;
+      }
+    }
+    
+    // Start a new merge group
+    currentSkid = item.skid;
+    mergeStartIndex = index;
+  }
+});
+
+// Handle the last group
+if (lineItems.length > 0 && mergeStartIndex < lineItems.length - 1) {
+  lineItems[mergeStartIndex].mergeSkidRows = lineItems.length - mergeStartIndex;
+  
+  // Hide SKID values for all but the first row in the last group
+  for (let i = mergeStartIndex + 1; i < lineItems.length; i++) {
+    lineItems[i].showSkid = false;
+  }
+}
+
+return lineItems;
 };
 //};
 
@@ -783,9 +820,34 @@ const exportToExcel = async () => {
     const headerRow = worksheet.getRow(5);
     headerRow.font = { bold: true };
     
+    // Keep track of where SKID values change for merging
+    const skidMergeInfo = {};
+    const startDataRow = 6; // Row where data starts (after headers)
+    let currentSkid = null;
+    let lastSkidRow = 0;
+    let currentRow = startDataRow;
+    
+    // Calculate which column contains the SKID value (accounting for hidden ORIGIN)
+    const skidColumnIndex = columnHeaders.length; // It's the last column
+    
     // Add data rows
     reportData.value.lineItems.forEach((item, index) => {
       const rowEdits = editedCells.value[index] || {};
+      
+      // Handle SKID merging tracking
+      if (currentSkid !== (rowEdits.skid || item.skid)) {
+        if (currentSkid !== null && currentRow - lastSkidRow > 1) {
+          // Store merge info for the previous group
+          skidMergeInfo[lastSkidRow] = {
+            startRow: lastSkidRow,
+            endRow: currentRow - 1
+          };
+        }
+        
+        // Start a new group
+        currentSkid = rowEdits.skid || item.skid;
+        lastSkidRow = currentRow;
+      }
       
       let rowData = [
         rowEdits.part || item.part,
@@ -815,10 +877,38 @@ const exportToExcel = async () => {
       ]);
       
       worksheet.addRow(rowData);
+      currentRow++;
+    });
+    
+    // Handle the last group
+    if (currentSkid !== null && currentRow - lastSkidRow > 1) {
+      skidMergeInfo[lastSkidRow] = {
+        startRow: lastSkidRow,
+        endRow: currentRow - 1
+      };
+    }
+    
+    // Perform the actual cell merging for SKID column
+    Object.values(skidMergeInfo).forEach(info => {
+      if (info.endRow > info.startRow) {
+        // Get the cell address for the start of the merge
+        const startCell = worksheet.getCell(info.startRow, skidColumnIndex);
+        
+        // Apply merge
+        worksheet.mergeCells(info.startRow, skidColumnIndex, info.endRow, skidColumnIndex);
+        
+        // Style the merged cell
+        startCell.alignment = { vertical: 'middle', horizontal: 'center' };
+        startCell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FFF0F7FF' }
+        };
+      }
     });
     
     // Add subtotal row - respect hideOriginColumn setting
-    const currentRow = worksheet.rowCount + 1;
+    const subtotalRowNumber = worksheet.rowCount + 1;
     let subtotalRow = [
       '', '', '', 'Total',
       reportData.value.subtotals.quantity,
@@ -846,7 +936,7 @@ const exportToExcel = async () => {
     worksheet.addRow(subtotalRow);
     
     // Style the subtotal row
-    const subtotalRowEl = worksheet.getRow(currentRow);
+    const subtotalRowEl = worksheet.getRow(subtotalRowNumber);
     subtotalRowEl.font = { bold: true };
     
     // Add empty row for spacing
@@ -1161,7 +1251,7 @@ const getSampleReportData = () => {
                 <td class="hide-mobile currency">${{ item.totalCostRm.toFixed(4) }}</td>
                 <td class="hide-mobile currency">${{ item.totalLaborCost.toFixed(4) }}</td>
                 <td class="currency">${{ item.totalCost.toFixed(4) }}</td>
-                <td>{{ item.skid }}</td>
+                <td v-if="item.showSkid" :rowspan="item.mergeSkidRows" class="skid-cell">{{ item.skid }}</td>
               </tr>
               <tr class="subtotal-row">
                 <td colspan="3" class="subtotal-spacer"></td>
@@ -1826,5 +1916,12 @@ td.hide-origin {
     margin: 20px 0;
     border: none;
   }
+}
+/* SKID cell styling */
+.skid-cell {
+  vertical-align: middle;
+  text-align: center;
+  background-color: rgba(240, 247, 255, 0.2);
+  border: 1px solid #dee2e6;
 }
 </style>
